@@ -1,0 +1,30 @@
+#!/bin/bash
+
+# Up and Down open hdf with the typed text as the query: Enter puts the chosen command on the line,
+# Ctrl-D deletes commands from history. Stowed to ~/.hdfrc, load it in .bashrc with:
+#   [[ -f ~/.hdfrc ]] && . ~/.hdfrc
+#
+# Deleted commands leave this shell's history at the next prompt when PROMPT_COMMAND reloads it
+# (history -a; history -c; history -r). Reloading here would clash with readline, which writes
+# the edited line back over a history entry when the binding returns.
+
+# Key bindings need an interactive shell, and hdf itself
+[[ $- == *i* ]] || return
+command -v hdf > /dev/null || return
+
+__hdf_search() {
+  local command
+
+  # Save this shell's new commands first so they can be found
+  history -a
+
+  if command=$(HISTFILE=${HISTFILE} hdf -- "${READLINE_LINE}"); then
+    READLINE_LINE=${command}
+    READLINE_POINT=${#command}
+  fi
+}
+
+bind -x '"\e[A": __hdf_search'
+bind -x '"\eOA": __hdf_search'
+bind -x '"\e[B": __hdf_search'
+bind -x '"\eOB": __hdf_search'

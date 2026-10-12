@@ -1,0 +1,9 @@
+[package]
+name = "hdf"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
+libc = "0.2"
+ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }

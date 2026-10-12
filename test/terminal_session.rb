@@ -1,0 +1,179 @@
+require 'io/console'
+require 'pty'
+require 'timeout'
+
+# Runs a command in a pseudo terminal and keeps a model of its screen, so tests can type keys
+# and read what a user would see. The model knows the escape sequences ratatui sends through
+# crossterm: cursor moves, clearing, styles (ignored), and the cursor position query, which it
+# answers the way a terminal would.
+class TerminalSession
+  TIMEOUT = 5
+
+  attr_reader :rows, :columns
+
+  def initialize(command, env: {}, rows: 24, columns: 80, start_row: 1)
+    @rows = rows
+    @columns = columns
+    @grid = Array.new(rows) { Array.new(columns, ' ') }
+    @row = start_row - 1
+    @column = 0
+    @raw = +''
+    @mutex = Mutex.new
+    @reader, @writer, @pid = PTY.spawn(env, 'sh', '-c', %(stty rows #{rows} cols #{columns} && exec "$0" "$@"), *command)
+    @pump = Thread.new { pump }
+  end
+
+  def type(text)
+    @writer.write(text)
+    @writer.flush
+  end
+
+  def press(*keys)
+    keys.each { |key| type(KEYS.fetch(key)) }
+  end
+
+  KEYS = {
+    up: "\e[A",
+    down: "\e[B",
+    enter: "\r",
+    tab: "\t",
+    escape: "\e",
+    backspace: "\x7F",
+    ctrl_c: "\x03",
+    ctrl_d: "\x04",
+    ctrl_n: "\x0E",
+    ctrl_p: "\x10",
+    ctrl_u: "\x15",
+  }.freeze
+
+  # The screen as lines with trailing spaces removed
+  def screen
+    @mutex.synchronize { @grid.map { |row| row.join.rstrip } }
+  end
+
+  def wait_for(timeout: TIMEOUT)
+    Timeout.timeout(timeout) do
+      sleep(0.01) until yield(screen)
+    end
+  rescue Timeout::Error
+    raise Timeout::Error, "screen did not reach the expected state:\n#{screen.join("\n")}"
+  end
+
+  def wait_for_text(text, timeout: TIMEOUT)
+    wait_for(timeout:) { |lines| lines.any? { |line| line.include?(text) } }
+  end
+
+  # Waits for the process to exit, returns its status
+  def wait
+    Timeout.timeout(TIMEOUT) { Process.wait2(@pid).last }.tap { @pump.join(TIMEOUT) }
+  ensure
+    close
+  end
+
+  def close
+    Process.kill('KILL', @pid) if alive?
+    @reader.close unless @reader.closed?
+    @writer.close unless @writer.closed?
+  rescue Errno::ESRCH, Errno::ECHILD
+    nil
+  end
+
+  private
+
+  def alive?
+    Process.waitpid(@pid, Process::WNOHANG).nil?
+  rescue Errno::ECHILD
+    false
+  end
+
+  def pump
+    loop do
+      chunk = @reader.readpartial(4096)
+      @mutex.synchronize { feed(chunk) }
+    end
+  rescue EOFError, Errno::EIO, IOError
+    nil
+  end
+
+  TOKEN = /\A(?:\e\[([?\d;:]*)([@-~])|\e[^\[]|[\r\n\b]|[^\e\r\n\b])/m
+
+  def feed(chunk)
+    @raw << chunk.dup.force_encoding(Encoding::UTF_8)
+
+    # A lone escape or an unfinished sequence at the end waits for the next chunk
+    while (match = TOKEN.match(@raw))
+      @raw = match.post_match
+      apply(match)
+    end
+  end
+
+  def apply(match)
+    text = match[0]
+
+    if match[2]
+      control(match[1], match[2])
+    elsif text == "\r"
+      @column = 0
+    elsif text == "\n"
+      line_feed
+    elsif text == "\b"
+      @column = [@column - 1, 0].max
+    elsif !text.start_with?("\e")
+      put(text)
+    end
+  end
+
+  def control(params, command)
+    numbers = params.delete('?').split(';').map(&:to_i)
+
+    case command
+    when 'H', 'f' then move(numbers.fetch(0, 1) - 1, numbers.fetch(1, 1) - 1)
+    when 'A' then move(@row - [numbers.fetch(0, 1), 1].max, @column)
+    when 'B' then move(@row + [numbers.fetch(0, 1), 1].max, @column)
+    when 'C' then move(@row, @column + [numbers.fetch(0, 1), 1].max)
+    when 'D' then move(@row, @column - [numbers.fetch(0, 1), 1].max)
+    when 'G' then move(@row, numbers.fetch(0, 1) - 1)
+    when 'J' then clear_screen(numbers.fetch(0, 0))
+    when 'K' then clear_line(numbers.fetch(0, 0))
+    when 'n' then @writer.write("\e[#{@row + 1};#{@column + 1}R") if numbers == [6]
+    end
+  end
+
+  def move(row, column)
+    @row = row.clamp(0, @rows - 1)
+    @column = column.clamp(0, @columns - 1)
+  end
+
+  def put(char)
+    line_feed && (@column = 0) if @column >= @columns
+    @grid[@row][@column] = char
+    @column += 1
+  end
+
+  def line_feed
+    if @row == @rows - 1
+      @grid.shift
+      @grid.push(Array.new(@columns, ' '))
+    else
+      @row += 1
+    end
+  end
+
+  def clear_screen(mode)
+    case mode
+    when 0
+      clear_line(0)
+      (@row + 1...@rows).each { |row| @grid[row].fill(' ') }
+    when 2, 3
+      @grid.each { |row| row.fill(' ') }
+    end
+  end
+
+  def clear_line(mode)
+    case mode
+    when 0 then @grid[@row].fill(' ', @column)
+    when 1 then @grid[@row].fill(' ', 0, @column + 1)
+    when 2 then @grid[@row].fill(' ')
+    end
+  end
+end
