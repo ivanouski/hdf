@@ -9,7 +9,7 @@ require 'timeout'
 class TerminalSession
   TIMEOUT = 5
 
-  attr_reader :rows, :columns
+  attr_reader :rows, :columns, :pid
 
   def initialize(command, env: {}, rows: 24, columns: 80, start_row: 1)
     @rows = rows

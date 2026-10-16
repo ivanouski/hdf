@@ -49,8 +49,13 @@ impl History {
     // Removes the entries from the file, keeping lines other shells appended since it was loaded
     pub fn delete(&self, indices: &[usize]) -> io::Result<()> {
         let current = fs::read(&self.path)?;
+        // A line appended after a last line without a newline joins it, so the loaded entries no
+        // longer match the file
+        let joined = current.len() > self.content.len()
+            && !self.content.is_empty()
+            && !self.content.ends_with(b"\n");
 
-        if !current.starts_with(&self.content) {
+        if joined || !current.starts_with(&self.content) {
             return Err(io::Error::other(
                 "history file was changed by another process, try again",
             ));
@@ -283,6 +288,34 @@ mod tests {
 
         assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
         assert_eq!(metadata.len(), 0);
+    }
+
+    #[test]
+    fn refuses_to_delete_when_a_line_joined_the_last_one() {
+        let path = env::temp_dir().join(format!("hdf-test-joined-{}", std::process::id()));
+        fs::write(&path, "a\nb").unwrap();
+        let history = History::load(&path).unwrap();
+        fs::write(&path, "a\nbc\n").unwrap();
+
+        let result = history.delete(&[1]);
+        let content = fs::read_to_string(&path).unwrap();
+        fs::remove_file(&path).unwrap();
+
+        assert!(result.is_err());
+        assert_eq!(content, "a\nbc\n");
+    }
+
+    #[test]
+    fn deletes_from_a_file_without_a_final_newline_left_alone() {
+        let path = env::temp_dir().join(format!("hdf-test-no-newline-{}", std::process::id()));
+        fs::write(&path, "a\nb").unwrap();
+        let history = History::load(&path).unwrap();
+
+        history.delete(&[1]).unwrap();
+        let content = fs::read_to_string(&path).unwrap();
+        fs::remove_file(&path).unwrap();
+
+        assert_eq!(content, "a\n");
     }
 
     #[test]

@@ -9,6 +9,9 @@ use std::mem;
 use std::os::fd::{AsFd, AsRawFd, OwnedFd};
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 
 use ratatui::backend::{Backend, ClearType, CrosstermBackend};
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
@@ -48,7 +51,7 @@ Keys:
   Esc                       quit, exits with 1 (3 with --print-query)
   Ctrl-C                    quit, exits with 130
 
-Errors exit with 2.
+Errors exit with 2. SIGINT, SIGTERM and SIGHUP close the pane and exit with 128 + the signal.
 ";
 
 enum Args {
@@ -65,6 +68,8 @@ enum Outcome {
     Quit,
     // Ctrl-C
     Abort,
+    // SIGINT, SIGTERM or SIGHUP, with its number
+    Signaled(usize),
 }
 
 // .hdfrc tells these apart: a pick or the query goes on the prompt line, an error or Ctrl-C
@@ -117,6 +122,7 @@ fn run() -> Result<ExitCode, String> {
         }
         Outcome::Quit => Ok(ExitCode::from(QUIT_STATUS)),
         Outcome::Abort => Ok(ExitCode::from(ABORT_STATUS)),
+        Outcome::Signaled(signal) => Ok(ExitCode::from(128 + signal as u8)),
     }
 }
 
@@ -225,13 +231,24 @@ fn pick(finder: &mut Finder, history: &mut History) -> io::Result<Outcome> {
     let mut area = Rect::default();
     let mut status: Option<Result<String, String>> = None;
 
+    // Raw mode keeps Ctrl-C from sending SIGINT, but other processes can still send signals:
+    // take them as a way out, so the pane is cleared and the terminal restored like on Esc
+    let signal = Arc::new(AtomicUsize::new(0));
+
+    for number in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
+        signal_hook::flag::register_usize(number, Arc::clone(&signal), number as usize)?;
+    }
+
     let outcome = loop {
         terminal.draw(|frame| {
             area = frame.area();
             ui::draw(frame, finder, status.as_ref(), &mut list);
         })?;
 
-        let Event::Key(key) = event::read()? else {
+        let Some(event) = next_event(&signal)? else {
+            break Outcome::Signaled(signal.load(Ordering::Relaxed));
+        };
+        let Event::Key(key) = event else {
             continue;
         };
 
@@ -240,6 +257,7 @@ fn pick(finder: &mut Finder, history: &mut History) -> io::Result<Outcome> {
         }
 
         let control = key.modifiers.contains(KeyModifiers::CONTROL);
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
         status = None;
 
         match key.code {
@@ -256,23 +274,46 @@ fn pick(finder: &mut Finder, history: &mut History) -> io::Result<Outcome> {
             KeyCode::Char('n') if control => finder.down(),
             KeyCode::Backspace => finder.pop(),
             KeyCode::Char('u') if control => finder.clear(),
-            KeyCode::Char(char) if !control => finder.push(char),
+            // Alt and a letter is a shortcut elsewhere, not text for the query
+            KeyCode::Char(char) if !control && !alt => finder.push(char),
             _ => {}
         }
     };
 
     // Leave no trace of the pane and put the cursor back where it was
-    let backend = terminal.backend_mut();
-    backend.set_cursor_position(area.as_position())?;
-    backend.clear_region(ClearType::AfterCursor)?;
+    let cleared = (|| {
+        let backend = terminal.backend_mut();
+        backend.set_cursor_position(area.as_position())?;
+        backend.clear_region(ClearType::AfterCursor)?;
 
-    if column > 0 {
-        backend.set_cursor_position(Position::new(column, area.y.saturating_sub(1)))?;
+        if column > 0 {
+            backend.set_cursor_position(Position::new(column, area.y.saturating_sub(1)))?;
+        }
+
+        terminal.show_cursor()
+    })();
+
+    // After SIGHUP the terminal may be gone, the signal still decides the exit status
+    match outcome {
+        Outcome::Signaled(_) => Ok(outcome),
+        _ => cleared.map(|()| outcome),
     }
+}
 
-    terminal.show_cursor()?;
+// The next terminal event, or None once a signal arrived
+fn next_event(signal: &AtomicUsize) -> io::Result<Option<Event>> {
+    loop {
+        if signal.load(Ordering::Relaxed) != 0 {
+            return Ok(None);
+        }
 
-    Ok(outcome)
+        match event::poll(Duration::from_millis(100)) {
+            Ok(true) => return event::read().map(Some),
+            Ok(false) => {}
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(error),
+        }
+    }
 }
 
 // Deletes every occurrence of the selected command and reloads the history,

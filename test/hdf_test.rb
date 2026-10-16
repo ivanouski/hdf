@@ -91,6 +91,16 @@ class HdfTest < Minitest::Test
     assert_equal 11, pane.size - 1
   end
 
+  def test_ignores_letters_typed_with_alt
+    start('clau')
+
+    @session.type("\eb")
+    @session.type('d')
+    @session.wait_for_text('> claud ')
+
+    assert_equal ['> claud', 'Claude', 'claude --resume', 'sbx run claude (3)', 'sbx build claude'], pane
+  end
+
   def test_shows_nothing_without_matches
     start('nothing like it')
 
@@ -478,6 +488,17 @@ class HdfTest < Minitest::Test
     @session.wait
 
     assert_equal ['PROMPT$ Claude', ''], @session.screen.first(2)
+  end
+
+  def test_closes_the_pane_on_a_signal
+    { 'TERM' => 143, 'INT' => 130, 'HUP' => 129 }.each do |signal, status|
+      start('clau')
+
+      Process.kill(signal, @session.pid)
+
+      assert_equal status, @session.wait.exitstatus, signal
+      assert_equal '', @session.screen.join("\n").strip, signal
+    end
   end
 
   def test_scrolls_the_screen_when_opened_at_the_bottom
