@@ -35,6 +35,8 @@ class TerminalSession
   KEYS = {
     up: "\e[A",
     down: "\e[B",
+    page_up: "\e[5~",
+    page_down: "\e[6~",
     enter: "\r",
     tab: "\t",
     escape: "\e",

@@ -33,7 +33,7 @@ from the history on the way, every occurrence of them.
 
 The query matches commands containing it, ignoring case.
 
-~/.hdfrc, sourced from .bashrc, opens hdf on Up and Down and puts the chosen command on the
+~/.hdfrc, sourced from .bashrc, opens hdf on Page Up and Page Down and puts the chosen command on the
 prompt line, or the query as edited when leaving with Esc.
 
 Options:

@@ -517,14 +517,13 @@ class HdfTest < Minitest::Test
 
   # Bash setup
 
-  def test_hdfrc_binds_up_and_down
+  def test_hdfrc_binds_page_up_and_page_down
     stdout, = Open3.capture3({ 'PATH' => "#{HDF_DIR}:#{ENV.fetch('PATH')}" }, *bash_with_hdfrc('bind -X'))
 
-    # bind -X prints "\e[A" "__hdf_search", with a colon after the key in older bash versions
+    # bind -X prints "\e[5~" "__hdf_search", with a colon after the key in older bash versions
     bindings = stdout.lines(chomp: true).map { |line| line.scan(/"([^"]+)"/).flatten }
 
-    assert_equal [['\eOA', '__hdf_search'], ['\eOB', '__hdf_search'], ['\e[A', '__hdf_search'], ['\e[B', '__hdf_search']],
-                 bindings.sort
+    assert_equal [['\e[5~', '__hdf_search'], ['\e[6~', '__hdf_search']], bindings.sort
   end
 
   def test_hdfrc_does_nothing_in_a_non_interactive_shell
@@ -544,12 +543,12 @@ class HdfTest < Minitest::Test
     assert_includes stderr, '__hdf_search: not found'
   end
 
-  def test_up_opens_hdf_with_the_typed_text_and_enter_puts_the_command_on_the_line
+  def test_page_up_opens_hdf_with_the_typed_text_and_enter_puts_the_command_on_the_line
     File.write(@history, "echo first\necho picked\nls\n")
     start_bash
 
     @session.type('pick')
-    @session.press(:up)
+    @session.press(:page_up)
     @session.wait_for_text('> pick')
 
     assert_equal ['> pick', 'echo picked'], pane
@@ -565,29 +564,42 @@ class HdfTest < Minitest::Test
     File.write(@history, "echo first\necho picked\n")
     start_bash
 
-    @session.press(:up)
+    @session.press(:page_up)
     @session.wait_for_text('> ')
     @session.press(:tab)
 
     @session.wait_for { |lines| lines.first == '$ echo picked' }
   end
 
-  def test_up_on_an_empty_line_lists_every_command
+  def test_page_up_on_an_empty_line_lists_every_command
     File.write(@history, "echo first\nls\n")
     start_bash
 
-    @session.press(:up)
+    @session.press(:page_up)
     @session.wait_for_text('> ')
 
     assert_equal ['>', 'ls', 'echo first'], pane
   end
 
-  def test_down_opens_hdf_too
+  def test_up_and_down_browse_history_as_usual
+    File.write(@history, "echo first\necho second\n")
+    start_bash
+
+    @session.press(:up)
+    @session.wait_for { |lines| lines.first == '$ echo second' }
+    @session.press(:up)
+    @session.wait_for { |lines| lines.first == '$ echo first' }
+    @session.press(:down)
+
+    @session.wait_for { |lines| lines.first == '$ echo second' }
+  end
+
+  def test_page_down_opens_hdf_too
     File.write(@history, "echo first\nls\n")
     start_bash
 
     @session.type('echo')
-    @session.press(:down)
+    @session.press(:page_down)
     @session.wait_for_text('> echo')
 
     assert_equal ['> echo', 'echo first'], pane
@@ -597,7 +609,7 @@ class HdfTest < Minitest::Test
     start_bash
 
     @session.type('sbx')
-    @session.press(:up)
+    @session.press(:page_up)
     @session.wait_for_text('> sbx')
     @session.press(:escape)
 
@@ -608,7 +620,7 @@ class HdfTest < Minitest::Test
     start_bash
 
     @session.type('sbx run')
-    @session.press(:up)
+    @session.press(:page_up)
     @session.wait_for_text('> sbx run')
     @session.press(:backspace, :backspace, :backspace, :backspace)
     @session.wait_for { |lines| lines.first.start_with?('> sbx ') && !lines.first.include?('run') }
@@ -623,7 +635,7 @@ class HdfTest < Minitest::Test
     start_bash
 
     @session.type("sbx run\e[D\e[D\e[D")
-    @session.press(:up)
+    @session.press(:page_up)
     @session.wait_for_text('> sbx run')
     @session.press(:escape)
     @session.wait_for { |lines| lines.first == '$ sbx run' }
@@ -636,7 +648,7 @@ class HdfTest < Minitest::Test
     start_bash
 
     @session.type('sbx run')
-    @session.press(:up)
+    @session.press(:page_up)
     @session.wait_for_text('> sbx run')
     @session.press(:backspace, :backspace, :backspace)
     @session.wait_for { |lines| lines.first.start_with?('> sbx ') && !lines.first.include?('r') }
@@ -651,7 +663,7 @@ class HdfTest < Minitest::Test
     start_bash
 
     @session.type('sbx run')
-    @session.press(:up)
+    @session.press(:page_up)
     @session.wait_for_text('> sbx run')
     @session.type('zzz')
     @session.wait_for_text('> sbx runzzz')
@@ -672,7 +684,7 @@ class HdfTest < Minitest::Test
     start_bash(path: old_bin)
 
     @session.type('sbx run')
-    @session.press(:up)
+    @session.press(:page_up)
 
     @session.wait_for_text('hdf: invalid option: --print-query')
     @session.wait_for { |lines| lines.any? { |line| line == '$ sbx run' } }
@@ -682,7 +694,7 @@ class HdfTest < Minitest::Test
     start_bash
 
     @session.type('sbx run')
-    @session.press(:up)
+    @session.press(:page_up)
     @session.wait_for_text('> sbx run')
     @session.press(:backspace, :backspace, :backspace, :backspace)
     @session.wait_for { |lines| !lines.first.include?('run') }
@@ -698,7 +710,7 @@ class HdfTest < Minitest::Test
     @session.wait_for { |lines| lines[1] == '$' }
 
     @session.type('sbx run')
-    @session.press(:up)
+    @session.press(:page_up)
 
     @session.wait_for_text('hdf: cannot read')
     @session.wait_for { |lines| lines.last(24).any? { |line| line == '$ sbx run' } }
@@ -710,7 +722,7 @@ class HdfTest < Minitest::Test
 
     @session.type("echo fresh\r")
     @session.wait_for_text('fresh')
-    @session.press(:up)
+    @session.press(:page_up)
     @session.wait_for_text('> ')
 
     assert_equal ['>', 'echo fresh'], pane
@@ -720,7 +732,7 @@ class HdfTest < Minitest::Test
     File.write(@history, "echo secret\necho keep\n")
     start_bash
 
-    @session.press(:up)
+    @session.press(:page_up)
     @session.wait_for_text('> ')
     @session.press(:down)
     delete
@@ -738,7 +750,7 @@ class HdfTest < Minitest::Test
     File.write(@history, "echo first\necho second\n")
     start_bash
 
-    @session.press(:up)
+    @session.press(:page_up)
     @session.wait_for_text('> ')
     @session.press(:enter)
     @session.wait_for_text('$ echo second')
