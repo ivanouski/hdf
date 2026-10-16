@@ -182,7 +182,64 @@ class HdfTest < Minitest::Test
   def test_ctrl_c_prints_nothing
     start('clau')
 
-    assert_cancels(:ctrl_c)
+    assert_cancels(:ctrl_c, status: 130)
+  end
+
+  # Quitting with --print-query
+
+  def test_escape_prints_the_edited_query
+    start('--print-query', 'sbx run')
+
+    @session.press(:backspace, :backspace, :backspace, :backspace)
+
+    assert_cancels(:escape, status: 3, output: 'sbx')
+  end
+
+  def test_enter_without_matches_prints_the_query
+    start('--print-query', 'nothing like it')
+
+    assert_cancels(:enter, status: 3, output: 'nothing like it')
+  end
+
+  def test_tab_without_matches_prints_the_query
+    start('--print-query', 'nothing like it')
+
+    assert_cancels(:tab, status: 3, output: 'nothing like it')
+  end
+
+  def test_keeps_trailing_whitespace_in_the_query
+    output = File.join(@tmp_dir, 'output')
+    start(command: ['sh', '-c', %("$0" "$@" > "#{output}"), HDF, '--print-query', 'sbx  '])
+
+    @session.press(:escape)
+
+    assert_equal 3, @session.wait.exitstatus
+    assert_equal "sbx  \n", File.read(output)
+  end
+
+  def test_prints_an_empty_query
+    File.write(@history, "ls\n")
+    output = File.join(@tmp_dir, 'output')
+    start(command: ['sh', '-c', %("$0" "$@" > "#{output}"), HDF, '--print-query', 'l'])
+
+    @session.press(:backspace, :escape)
+
+    assert_equal 3, @session.wait.exitstatus
+    assert_equal "\n", File.read(output)
+  end
+
+  def test_ctrl_c_prints_no_query
+    start('--print-query', 'sbx run')
+
+    @session.press(:backspace)
+
+    assert_cancels(:ctrl_c, status: 130)
+  end
+
+  def test_picking_prints_only_the_command
+    start('--print-query', 'clau')
+
+    assert_picks(:enter, 'Claude')
   end
 
   def test_prints_to_captured_stdout
@@ -526,6 +583,106 @@ class HdfTest < Minitest::Test
     @session.wait_for { |lines| lines.first == '$ sbx' }
   end
 
+  def test_escape_puts_the_edited_query_on_the_line
+    start_bash
+
+    @session.type('sbx run')
+    @session.press(:up)
+    @session.wait_for_text('> sbx run')
+    @session.press(:backspace, :backspace, :backspace, :backspace)
+    @session.wait_for { |lines| lines.first.start_with?('> sbx ') && !lines.first.include?('run') }
+    @session.press(:escape)
+    @session.wait_for { |lines| lines.first == '$ sbx' }
+    @session.type('X')
+
+    @session.wait_for { |lines| lines.first == '$ sbxX' }
+  end
+
+  def test_escape_without_edits_keeps_the_cursor
+    start_bash
+
+    @session.type("sbx run\e[D\e[D\e[D")
+    @session.press(:up)
+    @session.wait_for_text('> sbx run')
+    @session.press(:escape)
+    @session.wait_for { |lines| lines.first == '$ sbx run' }
+    @session.type('X')
+
+    @session.wait_for { |lines| lines.first == '$ sbx Xrun' }
+  end
+
+  def test_escape_keeps_trailing_spaces_of_the_query
+    start_bash
+
+    @session.type('sbx run')
+    @session.press(:up)
+    @session.wait_for_text('> sbx run')
+    @session.press(:backspace, :backspace, :backspace)
+    @session.wait_for { |lines| lines.first.start_with?('> sbx ') && !lines.first.include?('r') }
+    @session.press(:escape)
+    @session.wait_for { |lines| lines.first == '$ sbx' }
+    @session.type('X')
+
+    @session.wait_for { |lines| lines.first == '$ sbx X' }
+  end
+
+  def test_enter_without_matches_puts_the_query_on_the_line
+    start_bash
+
+    @session.type('sbx run')
+    @session.press(:up)
+    @session.wait_for_text('> sbx run')
+    @session.type('zzz')
+    @session.wait_for_text('> sbx runzzz')
+    @session.press(:enter)
+
+    @session.wait_for { |lines| lines.first == '$ sbx runzzz' }
+  end
+
+  def test_an_older_hdf_leaves_the_typed_text
+    old_bin = File.join(@tmp_dir, 'old_bin')
+    FileUtils.mkdir_p(old_bin)
+    File.write(File.join(old_bin, 'hdf'), <<~SH)
+      #!/bin/sh
+      echo "hdf: invalid option: --print-query" >&2
+      exit 1
+    SH
+    File.chmod(0o755, File.join(old_bin, 'hdf'))
+    start_bash(path: old_bin)
+
+    @session.type('sbx run')
+    @session.press(:up)
+
+    @session.wait_for_text('hdf: invalid option: --print-query')
+    @session.wait_for { |lines| lines.any? { |line| line == '$ sbx run' } }
+  end
+
+  def test_ctrl_c_restores_the_typed_text
+    start_bash
+
+    @session.type('sbx run')
+    @session.press(:up)
+    @session.wait_for_text('> sbx run')
+    @session.press(:backspace, :backspace, :backspace, :backspace)
+    @session.wait_for { |lines| !lines.first.include?('run') }
+    @session.press(:ctrl_c)
+
+    @session.wait_for { |lines| lines.first == '$ sbx run' }
+  end
+
+  def test_an_error_leaves_the_typed_text
+    start_bash
+    # A directory, which hdf cannot read
+    @session.type("HISTFILE=#{@tmp_dir}\r")
+    @session.wait_for { |lines| lines[1] == '$' }
+
+    @session.type('sbx run')
+    @session.press(:up)
+
+    @session.wait_for_text('hdf: cannot read')
+    @session.wait_for { |lines| lines.last(24).any? { |line| line == '$ sbx run' } }
+  end
+
   def test_finds_commands_from_the_current_shell
     File.write(@history, '')
     start_bash
@@ -604,7 +761,7 @@ class HdfTest < Minitest::Test
   def test_rejects_unknown_option
     _, stderr, status = run_hdf('-x')
 
-    refute status.success?
+    assert_equal 2, status.exitstatus
     assert_equal "hdf: invalid option: -x\nTry 'hdf --help' for usage.\n", stderr
   end
 
@@ -624,7 +781,7 @@ class HdfTest < Minitest::Test
   def test_fails_on_a_missing_history_file
     _, stderr, status = run_hdf('ls', env: { 'HISTFILE' => File.join(@tmp_dir, 'missing') })
 
-    refute status.success?
+    assert_equal 2, status.exitstatus
     assert_match(/\Ahdf: cannot read .*missing: No such file or directory/, stderr)
   end
 
@@ -641,7 +798,7 @@ class HdfTest < Minitest::Test
   end
 
   # An interactive bash with the hdf setup, the dotfiles' history reload, and a $ prompt
-  def start_bash
+  def start_bash(path: HDF_DIR)
     rc = File.join(@tmp_dir, 'bashrc')
     File.write(rc, <<~BASH)
       PS1='$ '
@@ -649,7 +806,7 @@ class HdfTest < Minitest::Test
       PROMPT_COMMAND='history -a; history -c; history -r'
       . #{HDFRC}
     BASH
-    env = { 'PATH' => "#{HDF_DIR}:#{ENV.fetch('PATH')}", 'HOME' => @tmp_dir, 'INPUTRC' => File::NULL, 'TZ' => 'UTC' }
+    env = { 'PATH' => "#{path}:#{ENV.fetch('PATH')}", 'HOME' => @tmp_dir, 'INPUTRC' => File::NULL, 'TZ' => 'UTC' }
     @session = TerminalSession.new(['bash', '--noprofile', '--rcfile', rc, '-i'], env:)
     @session.wait_for { |lines| lines.first == '$' }
   end
@@ -695,13 +852,12 @@ class HdfTest < Minitest::Test
     assert_equal command, @session.screen.join("\n").strip
   end
 
-  # Presses the keys and checks hdf exited with 1 and left nothing on the screen
-  def assert_cancels(*keys)
+  # Presses the keys and checks hdf exited with the status, leaving only the output on the screen
+  def assert_cancels(*keys, status: 1, output: '')
     @session.press(*keys)
-    status = @session.wait
 
-    assert_equal 1, status.exitstatus
-    assert_equal '', @session.screen.join("\n").strip
+    assert_equal status, @session.wait.exitstatus
+    assert_equal output, @session.screen.join("\n").strip
   end
 
   def run_hdf(*args, env: { 'HISTFILE' => @history })

@@ -31,49 +31,70 @@ from the history on the way, every occurrence of them.
 The query matches commands containing it, ignoring case.
 
 ~/.hdfrc, sourced from .bashrc, opens hdf on Up and Down and puts the chosen command on the
-prompt line.
+prompt line, or the query as edited when leaving with Esc.
 
 Options:
+  --print-query  when quitting with Esc, or Enter and Tab without matches, print the query
+                 as last edited and exit with 3
   -h, --help     print this help
   -V, --version  print the version
   --             end of options, the rest is the query
 
 Keys:
   Up, Down, Ctrl-P, Ctrl-N  move the selection
-  Enter, Tab                print the selected command
+  Enter, Tab                print the selected command; without matches, quit like Esc
   Ctrl-D                    delete the selected command, every occurrence of it
   Backspace, Ctrl-U         delete a character, clear the query
-  Esc, Ctrl-C               quit without printing, exits with 1
+  Esc                       quit, exits with 1 (3 with --print-query)
+  Ctrl-C                    quit, exits with 130
+
+Errors exit with 2.
 ";
 
 enum Args {
-    Search(String),
+    Search { query: String, print_query: bool },
     Help,
     Version,
 }
 
+// How the finder was left
+enum Outcome {
+    // Enter or Tab on a command
+    Picked(String),
+    // Esc, or Enter and Tab without matches
+    Quit,
+    // Ctrl-C
+    Abort,
+}
+
+// .hdfrc tells these apart: a pick or the query goes on the prompt line, an error or Ctrl-C
+// leaves the line as it was. Printing the query has a status of its own, so .hdfrc does not take
+// a failure of an hdf without --print-query, an older one, for an empty query.
+const QUIT_STATUS: u8 = 1;
+const ERROR_STATUS: u8 = 2;
+const QUERY_STATUS: u8 = 3;
+const ABORT_STATUS: u8 = 130;
+
 fn main() -> ExitCode {
     match run() {
-        Ok(true) => ExitCode::SUCCESS,
-        Ok(false) => ExitCode::FAILURE,
+        Ok(status) => status,
         Err(message) => {
             eprintln!("hdf: {message}");
-            ExitCode::FAILURE
+            ExitCode::from(ERROR_STATUS)
         }
     }
 }
 
-// True when there was something to print
-fn run() -> Result<bool, String> {
-    let query = match parse_args()? {
-        Args::Search(query) => query,
+fn run() -> Result<ExitCode, String> {
+    let (query, print_query) = match parse_args()? {
+        Args::Search { query, print_query } => (query, print_query),
         Args::Help => {
             print!("{USAGE}");
-            return Ok(true);
+            return Ok(ExitCode::SUCCESS);
         }
         Args::Version => {
             println!("hdf {}", env!("CARGO_PKG_VERSION"));
-            return Ok(true);
+            return Ok(ExitCode::SUCCESS);
         }
     };
 
@@ -82,27 +103,34 @@ fn run() -> Result<bool, String> {
         History::load(&path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
     let mut finder = Finder::new(history.entries(), query);
 
-    let command =
+    let outcome =
         pick(&mut finder, &mut history).map_err(|error| format!("terminal error: {error}"))?;
 
-    match command {
-        Some(command) => {
+    match outcome {
+        Outcome::Picked(command) => {
             println!("{command}");
-            Ok(true)
+            Ok(ExitCode::SUCCESS)
         }
-        None => Ok(false),
+        Outcome::Quit if print_query => {
+            println!("{}", finder.query);
+            Ok(ExitCode::from(QUERY_STATUS))
+        }
+        Outcome::Quit => Ok(ExitCode::from(QUIT_STATUS)),
+        Outcome::Abort => Ok(ExitCode::from(ABORT_STATUS)),
     }
 }
 
 fn parse_args() -> Result<Args, String> {
     let mut words = Vec::new();
     let mut options = true;
+    let mut print_query = false;
 
     for arg in env::args().skip(1) {
         match arg.as_str() {
             "--" if options => options = false,
             "-h" | "--help" if options => return Ok(Args::Help),
             "-V" | "--version" if options => return Ok(Args::Version),
+            "--print-query" if options => print_query = true,
             option if options && option.starts_with('-') && option.len() > 1 => {
                 return Err(format!(
                     "invalid option: {option}\nTry 'hdf --help' for usage."
@@ -112,7 +140,10 @@ fn parse_args() -> Result<Args, String> {
         }
     }
 
-    Ok(Args::Search(words.join(" ")))
+    Ok(Args::Search {
+        query: words.join(" "),
+        print_query,
+    })
 }
 
 fn history_path() -> Result<PathBuf, String> {
@@ -168,8 +199,8 @@ fn dup2(from: i32, to: i32) -> io::Result<()> {
     }
 }
 
-// Runs the finder in a pane under the cursor's line, returns the command picked with Enter or Tab
-fn pick(finder: &mut Finder, history: &mut History) -> io::Result<Option<String>> {
+// Runs the finder in a pane under the cursor's line, returns how it was left
+fn pick(finder: &mut Finder, history: &mut History) -> io::Result<Outcome> {
     // Draw on the terminal itself so the finder works with stdout captured
     let mut tty = OpenOptions::new().read(true).write(true).open("/dev/tty")?;
     let _stdout = StdoutToTty::new(&tty)?;
@@ -194,7 +225,7 @@ fn pick(finder: &mut Finder, history: &mut History) -> io::Result<Option<String>
     let mut area = Rect::default();
     let mut status: Option<Result<String, String>> = None;
 
-    let picked = loop {
+    let outcome = loop {
         terminal.draw(|frame| {
             area = frame.area();
             ui::draw(frame, finder, status.as_ref(), &mut list);
@@ -212,11 +243,12 @@ fn pick(finder: &mut Finder, history: &mut History) -> io::Result<Option<String>
         status = None;
 
         match key.code {
-            KeyCode::Esc => break None,
-            KeyCode::Char('c') if control => break None,
-            KeyCode::Enter | KeyCode::Tab => {
-                break finder.selection().map(|command| command.original.clone());
-            }
+            KeyCode::Esc => break Outcome::Quit,
+            KeyCode::Char('c') if control => break Outcome::Abort,
+            KeyCode::Enter | KeyCode::Tab => match finder.selection() {
+                Some(command) => break Outcome::Picked(command.original.clone()),
+                None => break Outcome::Quit,
+            },
             KeyCode::Char('d') if control => status = delete(finder, history),
             KeyCode::Up => finder.up(),
             KeyCode::Char('p') if control => finder.up(),
@@ -240,7 +272,7 @@ fn pick(finder: &mut Finder, history: &mut History) -> io::Result<Option<String>
 
     terminal.show_cursor()?;
 
-    Ok(picked)
+    Ok(outcome)
 }
 
 // Deletes every occurrence of the selected command and reloads the history,

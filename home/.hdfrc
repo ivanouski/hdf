@@ -1,7 +1,8 @@
 #!/bin/bash
 
-# Up and Down open hdf with the typed text as the query: Enter puts the chosen command on the line,
-# Ctrl-D deletes commands from history. Stowed to ~/.hdfrc, load it in .bashrc with:
+# Up and Down open hdf with the typed text as the query: Enter and Tab put the chosen command on the
+# line, Esc puts the query back as edited there, Ctrl-C leaves the line as it was, Ctrl-D deletes
+# commands from history. Stowed to ~/.hdfrc, load it in .bashrc with:
 #   [[ -f ~/.hdfrc ]] && . ~/.hdfrc
 #
 # Deleted commands leave this shell's history at the next prompt when PROMPT_COMMAND reloads it
@@ -13,14 +14,20 @@
 command -v hdf > /dev/null || return
 
 __hdf_search() {
-  local command
+  local line status
 
   # Save this shell's new commands first so they can be found
   history -a
 
-  if command=$(HISTFILE=${HISTFILE} hdf -- "${READLINE_LINE}"); then
-    READLINE_LINE=${command}
-    READLINE_POINT=${#command}
+  line=$(HISTFILE=${HISTFILE} hdf --print-query -- "${READLINE_LINE}")
+  status=$?
+
+  # 0 prints the picked command, 3 the query left with Esc. Anything else leaves the line as it
+  # was: Ctrl-C (130), errors (2), and an hdf too old for --print-query, which fails with 1.
+  # An unchanged line keeps the cursor where it was.
+  if (( status == 0 || status == 3 )) && [[ ${line} != "${READLINE_LINE}" ]]; then
+    READLINE_LINE=${line}
+    READLINE_POINT=${#line}
   fi
 }
 

@@ -135,8 +135,23 @@ class TerminalSession
     when 'G' then move(@row, numbers.fetch(0, 1) - 1)
     when 'J' then clear_screen(numbers.fetch(0, 0))
     when 'K' then clear_line(numbers.fetch(0, 0))
+    when '@' then insert_blanks([numbers.fetch(0, 1), 1].max)
+    when 'P' then delete_chars([numbers.fetch(0, 1), 1].max)
     when 'n' then @writer.write("\e[#{@row + 1};#{@column + 1}R") if numbers == [6]
     end
+  end
+
+  # Readline inserts and deletes in the middle of a line by shifting the rest of it
+  def insert_blanks(count)
+    line = @grid[@row]
+    line.insert(@column, *Array.new(count, ' '))
+    line.pop(count)
+  end
+
+  def delete_chars(count)
+    line = @grid[@row]
+    line.slice!(@column, count)
+    line.fill(' ', line.size...@columns)
   end
 
   def move(row, column)
