@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require_relative 'test_helper'
 require_relative 'terminal_session'
 
@@ -415,7 +417,7 @@ class HdfTest < Minitest::Test
 
     assert File.symlink?(link)
     refute_includes File.read(@history), 'tmux'
-    assert_equal ['bash_history', 'link'], Dir.children(@tmp_dir).sort
+    assert_equal %w[bash_history link], Dir.children(@tmp_dir).sort
   end
 
   def test_falls_back_to_bash_history_in_home
@@ -496,9 +498,9 @@ class HdfTest < Minitest::Test
     stderr = File.join(@tmp_dir, 'stderr')
     pid = Process.spawn({ 'HISTFILE' => @history }, HDF, '--delete-last', '3', out: writer, err: stderr)
     writer.close
-    Process.wait(pid)
+    _, status = Process.wait2(pid)
 
-    assert $?.success?
+    assert status.success?
     assert_empty File.read(stderr)
     assert_equal HISTORY.lines[0...-3].join, File.read(@history)
   end
@@ -629,7 +631,8 @@ class HdfTest < Minitest::Test
   end
 
   def test_hdfrc_does_nothing_without_hdf
-    stdout, stderr, status = Open3.capture3({ 'PATH' => '/usr/bin:/bin' }, *bash_with_hdfrc('bind -X; type __hdf_search'))
+    stdout, stderr, status = Open3.capture3({ 'PATH' => '/usr/bin:/bin' },
+                                            *bash_with_hdfrc('bind -X; type __hdf_search'))
 
     refute status.success?
     assert_empty stdout
@@ -933,13 +936,15 @@ class HdfTest < Minitest::Test
   def test_ignores_a_relative_config_home
     write_config(%([colors]\nselected = { bg = "21" }\n), home: File.join(@tmp_dir, '.config'))
     write_config('broken', home: File.join(@tmp_dir, 'relative'))
-    start('cd', env: { 'XDG_CONFIG_HOME' => 'relative', 'HOME' => @tmp_dir }, command: ['sh', '-c', %(cd "#{@tmp_dir}" && exec "$0" cd), HDF])
+    start('cd', env: { 'XDG_CONFIG_HOME' => 'relative', 'HOME' => @tmp_dir },
+                command: ['sh', '-c', %(cd "#{@tmp_dir}" && exec "$0" cd), HDF])
 
     assert_color '48;5;21'
   end
 
   def test_init_config_ignores_a_relative_config_home
-    stdout, _, status = Open3.capture3({ 'HISTFILE' => @history, 'XDG_CONFIG_HOME' => 'relative', 'HOME' => @tmp_dir }, HDF, '--init-config', chdir: @tmp_dir)
+    stdout, _, status = Open3.capture3({ 'HISTFILE' => @history, 'XDG_CONFIG_HOME' => 'relative', 'HOME' => @tmp_dir },
+                                       HDF, '--init-config', chdir: @tmp_dir)
 
     assert status.success?
     assert_equal "#{File.join(@tmp_dir, '.config', 'hdf', 'config.toml')}\n", stdout
@@ -950,7 +955,7 @@ class HdfTest < Minitest::Test
   def test_init_config_leaves_no_half_written_config
     path = File.join(config_home, 'hdf', 'config.toml')
     _, stderr, status = Open3.capture3(
-      { 'XDG_CONFIG_HOME' => config_home }, 'sh', '-c', %(trap '' XFSZ; ulimit -f 0; exec "$0" --init-config), HDF,
+      { 'XDG_CONFIG_HOME' => config_home }, 'sh', '-c', %(trap '' XFSZ; ulimit -f 0; exec "$0" --init-config), HDF
     )
 
     assert_equal 2, status.exitstatus
@@ -1062,7 +1067,7 @@ class HdfTest < Minitest::Test
     top = lines.index { |line| line.start_with?('> ') }
     prompt = lines[top].sub(%r{ {2,}(\d+/\d+|deleted .*|cannot .*)\z}, '')
 
-    [prompt, *lines[top + 1..].take_while { |line| !line.empty? }.map(&:strip)]
+    [prompt, *lines[(top + 1)..].take_while { |line| !line.empty? }.map(&:strip)]
   end
 
   # Runs hdf with stdout captured, presses the keys, returns what it printed
@@ -1100,8 +1105,8 @@ class HdfTest < Minitest::Test
     assert_equal output, @session.screen.join("\n").strip
   end
 
-  def run_hdf(*args, env: {})
-    Open3.capture3({ 'HISTFILE' => @history, 'XDG_CONFIG_HOME' => config_home }.merge(env), HDF, *args)
+  def run_hdf(*, env: {})
+    Open3.capture3({ 'HISTFILE' => @history, 'XDG_CONFIG_HOME' => config_home }.merge(env), HDF, *)
   end
 
   # Checks for a style in what hdf drew, crossterm sends a foreground and a background as one sequence

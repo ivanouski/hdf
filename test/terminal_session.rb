@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require 'io/console'
 require 'pty'
 require 'timeout'
@@ -20,7 +22,8 @@ class TerminalSession
     @raw = +''
     @output = +''
     @mutex = Mutex.new
-    @reader, @writer, @pid = PTY.spawn(env, 'sh', '-c', %(stty rows #{rows} cols #{columns} && exec "$0" "$@"), *command)
+    @reader, @writer, @pid = PTY.spawn(env, 'sh', '-c', %(stty rows #{rows} cols #{columns} && exec "$0" "$@"),
+                                       *command)
     @pump = Thread.new { pump }
   end
 
@@ -48,6 +51,8 @@ class TerminalSession
     ctrl_p: "\x10",
     ctrl_u: "\x15",
   }.freeze
+
+  TOKEN = /\A(?:\e\[([?\d;:]*)([@-~])|\e[^\[]|[\r\n\b]|[^\e\r\n\b])/m
 
   # The screen as lines with trailing spaces removed
   def screen
@@ -104,11 +109,9 @@ class TerminalSession
       chunk = @reader.readpartial(4096)
       @mutex.synchronize { feed(chunk) }
     end
-  rescue EOFError, Errno::EIO, IOError
+  rescue Errno::EIO, IOError
     nil
   end
-
-  TOKEN = /\A(?:\e\[([?\d;:]*)([@-~])|\e[^\[]|[\r\n\b]|[^\e\r\n\b])/m
 
   def feed(chunk)
     @raw << chunk.dup.force_encoding(Encoding::UTF_8)
@@ -192,7 +195,7 @@ class TerminalSession
     case mode
     when 0
       clear_line(0)
-      (@row + 1...@rows).each { |row| @grid[row].fill(' ') }
+      ((@row + 1)...@rows).each { |row| @grid[row].fill(' ') }
     when 2, 3
       @grid.each { |row| row.fill(' ') }
     end

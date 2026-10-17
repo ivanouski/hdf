@@ -3,6 +3,8 @@ mod config;
 mod context;
 mod finder;
 mod history;
+#[cfg(test)]
+mod test_util;
 mod tty;
 mod ui;
 
@@ -32,6 +34,7 @@ use ui::Status;
 const PANE_HEIGHT: u16 = 12;
 
 // How the finder was left
+#[derive(Debug, PartialEq)]
 enum Outcome {
     // Enter or Tab on a command
     Picked(String),
@@ -62,7 +65,7 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<ExitCode, String> {
-    let (query, print_query) = match cli::parse_args()? {
+    let (query, print_query) = match cli::parse_args(env::args().skip(1))? {
         Args::Search { query, print_query } => (query, print_query),
         Args::DeleteLast(count) => {
             delete_last(count)?;
@@ -269,4 +272,172 @@ fn history_path() -> Result<PathBuf, String> {
 
 fn print_line(text: &str) -> Result<(), String> {
     writeln!(io::stdout(), "{text}").context("cannot print")
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use super::*;
+    use crate::test_util::TempFile;
+
+    // The finder lists the commands most recent first: echo, pwd, ls
+    const HISTORY: &str = "ls\npwd\necho\n";
+
+    const NONE: KeyModifiers = KeyModifiers::NONE;
+    const CONTROL: KeyModifiers = KeyModifiers::CONTROL;
+
+    // The finder on a history file of its own
+    struct Session {
+        file: TempFile,
+        history: History,
+        finder: Finder,
+    }
+
+    impl Session {
+        fn open(name: &str) -> Self {
+            let file = TempFile::new(&format!("keys-{name}"), HISTORY);
+            let history = History::load(&file.path).unwrap();
+            let finder = Finder::new(history.entries(), String::new());
+
+            Self {
+                file,
+                history,
+                finder,
+            }
+        }
+
+        fn press(
+            &mut self,
+            code: KeyCode,
+            modifiers: KeyModifiers,
+        ) -> ControlFlow<Outcome, Option<Status>> {
+            handle_key(
+                KeyEvent::new(code, modifiers),
+                &mut self.finder,
+                &mut self.history,
+            )
+        }
+
+        // Presses a key that keeps the finder open without a status
+        fn edit(&mut self, code: KeyCode, modifiers: KeyModifiers) {
+            assert_eq!(self.press(code, modifiers), Continue(None));
+        }
+    }
+
+    #[test]
+    fn moves_the_selection_with_arrows_and_ctrl_p_n() {
+        let mut session = Session::open("move");
+
+        for (code, modifiers, selected) in [
+            (KeyCode::Up, NONE, 0),
+            (KeyCode::Down, NONE, 1),
+            (KeyCode::Char('n'), CONTROL, 2),
+            (KeyCode::Down, NONE, 2),
+            (KeyCode::Up, NONE, 1),
+            (KeyCode::Char('p'), CONTROL, 0),
+        ] {
+            session.edit(code, modifiers);
+            assert_eq!(session.finder.selected, selected);
+        }
+    }
+
+    #[test]
+    fn edits_the_query() {
+        let mut session = Session::open("edit");
+
+        session.edit(KeyCode::Char('e'), NONE);
+        session.edit(KeyCode::Char('C'), KeyModifiers::SHIFT);
+        assert_eq!(session.finder.query, "eC");
+
+        session.edit(KeyCode::Backspace, NONE);
+        assert_eq!(session.finder.query, "e");
+
+        session.edit(KeyCode::Char('u'), CONTROL);
+        assert_eq!(session.finder.query, "");
+    }
+
+    #[test]
+    fn leaves_alt_and_control_letters_out_of_the_query() {
+        let mut session = Session::open("alt");
+
+        session.edit(KeyCode::Char('x'), KeyModifiers::ALT);
+        session.edit(KeyCode::Char('x'), CONTROL);
+
+        assert_eq!(session.finder.query, "");
+    }
+
+    #[test]
+    fn picks_the_selection_with_enter_and_tab() {
+        let mut session = Session::open("pick");
+
+        assert_eq!(
+            session.press(KeyCode::Enter, NONE),
+            Break(Outcome::Picked("echo".to_string()))
+        );
+
+        session.edit(KeyCode::Down, NONE);
+
+        assert_eq!(
+            session.press(KeyCode::Tab, NONE),
+            Break(Outcome::Picked("pwd".to_string()))
+        );
+    }
+
+    #[test]
+    fn quits_on_enter_without_matches() {
+        let mut session = Session::open("no-matches");
+        session.edit(KeyCode::Char('z'), NONE);
+
+        assert_eq!(session.press(KeyCode::Enter, NONE), Break(Outcome::Quit));
+    }
+
+    #[test]
+    fn quits_on_esc_and_aborts_on_ctrl_c() {
+        let mut session = Session::open("quit");
+
+        assert_eq!(session.press(KeyCode::Esc, NONE), Break(Outcome::Quit));
+        assert_eq!(
+            session.press(KeyCode::Char('c'), CONTROL),
+            Break(Outcome::Abort)
+        );
+    }
+
+    #[test]
+    fn deletes_the_selection_and_selects_the_next_command() {
+        let mut session = Session::open("delete");
+        session.edit(KeyCode::Down, NONE);
+
+        assert_eq!(
+            session.press(KeyCode::Char('d'), CONTROL),
+            Continue(Some(Status::Deleted("deleted pwd".to_string())))
+        );
+        assert_eq!(session.file.read(), "ls\necho\n");
+        assert_eq!(session.finder.selection().unwrap().text, "ls");
+    }
+
+    #[test]
+    fn shows_the_error_when_another_shell_changed_the_history() {
+        let mut session = Session::open("delete-changed");
+        fs::write(&session.file.path, "date\n").unwrap();
+
+        assert_eq!(
+            session.press(KeyCode::Char('d'), CONTROL),
+            Continue(Some(Status::Failed(
+                "cannot delete: history file was changed by another process, try again".to_string()
+            )))
+        );
+        assert_eq!(session.file.read(), "date\n");
+        // Reloaded all the same, so the finder shows what the file holds
+        assert_eq!(session.finder.selection().unwrap().text, "date");
+    }
+
+    #[test]
+    fn deletes_nothing_without_matches() {
+        let mut session = Session::open("delete-none");
+        session.edit(KeyCode::Char('z'), NONE);
+        session.edit(KeyCode::Char('d'), CONTROL);
+
+        assert_eq!(session.file.read(), HISTORY);
+    }
 }

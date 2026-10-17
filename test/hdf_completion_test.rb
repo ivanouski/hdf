@@ -1,10 +1,12 @@
+# frozen_string_literal: true
+
 require_relative 'test_helper'
 
 class HdfCompletionTest < Minitest::Test
   COMPLETION = File.join(ROOT, 'completions', '_hdf')
 
   # Sources the completion, completes the last word and prints the candidates
-  SCRIPT = <<~'BASH'.freeze
+  SCRIPT = <<~'BASH'
     source "$1"
     shift
     COMP_WORDS=("$@")

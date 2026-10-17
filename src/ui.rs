@@ -10,6 +10,7 @@ use crate::config::Theme;
 use crate::finder::{Finder, TIME_WIDTH};
 
 // The outcome of the last Ctrl-D, shown in place of the count until the next key
+#[derive(Debug, PartialEq)]
 pub enum Status {
     Deleted(String),
     Failed(String),

@@ -208,34 +208,10 @@ fn create_private(path: &Path) -> io::Result<File> {
 
 #[cfg(test)]
 mod tests {
-    use std::env;
     use std::os::unix::fs::PermissionsExt;
 
     use super::*;
-
-    // A file in the temp directory, removed when dropped, also when the test fails
-    struct TempFile {
-        path: PathBuf,
-    }
-
-    impl TempFile {
-        fn new(name: &str, content: &str) -> Self {
-            let path = env::temp_dir().join(format!("hdf-test-{name}-{}", std::process::id()));
-            fs::write(&path, content).unwrap();
-
-            Self { path }
-        }
-
-        fn read(&self) -> String {
-            fs::read_to_string(&self.path).unwrap()
-        }
-    }
-
-    impl Drop for TempFile {
-        fn drop(&mut self) {
-            let _ = fs::remove_file(&self.path);
-        }
-    }
+    use crate::test_util::TempFile;
 
     fn commands(content: &str) -> Vec<String> {
         parse(content.as_bytes())
