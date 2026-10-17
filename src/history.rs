@@ -8,7 +8,7 @@ pub struct Entry {
     // The command as stored, without the newline that ends it
     pub original: String,
     // The command as shown in the finder: newlines, tabs and other control characters become spaces
-    pub command: String,
+    pub text: String,
     // Seconds since the epoch, from the #<epoch> line bash writes when HISTTIMEFORMAT is set
     pub time: Option<i64>,
     // Bytes of the entry in the file, including its timestamp line and trailing newline
@@ -61,15 +61,24 @@ impl History {
             ));
         }
 
-        write_atomically(&self.path, &without(&current, &self.entries, indices))
+        write_atomically(
+            &self.path,
+            &remove_entries(&current, &self.entries, indices),
+        )
     }
+}
+
+// The lines of an entry in the file
+struct EntryLines {
+    timestamp: Option<Range<usize>>,
+    command: Range<usize>,
 }
 
 // With HISTTIMEFORMAT set bash writes a #<epoch> line before each entry, which can start anywhere
 // in the file when the setting was turned on later. Like bash, a timestamp belongs to the line after
 // it. When the file starts with a timestamp, an entry also spans every line up to the next timestamp
 // (multi-line commands), otherwise every line is an entry.
-fn parse(content: &[u8]) -> Vec<Entry> {
+pub fn parse(content: &[u8]) -> Vec<Entry> {
     let mut lines = Vec::new();
     let mut start = 0;
 
@@ -81,57 +90,69 @@ fn parse(content: &[u8]) -> Vec<Entry> {
     let multiline = lines
         .first()
         .is_some_and(|line| is_timestamp(&content[line.clone()]));
-    // Bytes of each entry, and of its command without the timestamp
-    let mut entries: Vec<(Range<usize>, Range<usize>)> = Vec::new();
+    let mut entries: Vec<EntryLines> = Vec::new();
     let mut timestamp: Option<Range<usize>> = None;
 
     for line in lines {
+        // A timestamp followed by another one has no command and is left out, like one at the end
         if is_timestamp(&content[line.clone()]) {
-            // A timestamp followed by another one has no command
-            if let Some(orphan) = timestamp.replace(line) {
-                entries.push((orphan.clone(), orphan.end..orphan.end));
-            }
-
+            timestamp = Some(line);
             continue;
         }
 
         match (timestamp.take(), entries.last_mut()) {
-            (Some(timestamp), _) => entries.push((timestamp.start..line.end, line)),
-            (None, Some((bytes, command))) if multiline => {
-                bytes.end = line.end;
-                command.end = line.end;
-            }
-            (None, _) => entries.push((line.clone(), line)),
+            (None, Some(last)) if multiline => last.command.end = line.end,
+            (timestamp, _) => entries.push(EntryLines {
+                timestamp,
+                command: line,
+            }),
         }
-    }
-
-    if let Some(orphan) = timestamp {
-        entries.push((orphan.clone(), orphan.end..orphan.end));
     }
 
     entries
         .into_iter()
-        .filter_map(|(bytes, command)| {
-            // Whatever comes before the command is its timestamp line, # and digits
-            let time = content
-                .get(bytes.start + 1..command.start)
-                .and_then(|seconds| std::str::from_utf8(seconds).ok())
-                .and_then(|seconds| seconds.trim_end().parse().ok());
-            let text = &content[command];
-            let original = String::from_utf8_lossy(text.strip_suffix(b"\n").unwrap_or(text));
-            let command = display(&original);
+        .filter_map(|EntryLines { timestamp, command }| {
+            let time = timestamp
+                .as_ref()
+                .and_then(|line| seconds(&content[line.clone()]));
+            let original = String::from_utf8_lossy(trim_newline(&content[command.clone()]));
+            let text = printable(&original);
+            let start = timestamp.map_or(command.start, |line| line.start);
 
-            (!command.trim().is_empty()).then(|| Entry {
+            (!text.trim().is_empty()).then(|| Entry {
                 original: original.into_owned(),
-                command,
+                text,
                 time,
-                bytes,
+                bytes: start..command.end,
             })
         })
         .collect()
 }
 
-fn without(content: &[u8], entries: &[Entry], indices: &[usize]) -> Vec<u8> {
+fn is_timestamp(line: &[u8]) -> bool {
+    let line = trim_newline(line);
+
+    line.len() > 1 && line[0] == b'#' && line[1..].iter().all(u8::is_ascii_digit)
+}
+
+// The seconds of a timestamp line, None when they overflow
+fn seconds(timestamp: &[u8]) -> Option<i64> {
+    let digits = trim_newline(timestamp).strip_prefix(b"#")?;
+
+    std::str::from_utf8(digits).ok()?.parse().ok()
+}
+
+fn trim_newline(line: &[u8]) -> &[u8] {
+    line.strip_suffix(b"\n").unwrap_or(line)
+}
+
+fn printable(text: &str) -> String {
+    text.chars()
+        .map(|char| if char.is_control() { ' ' } else { char })
+        .collect()
+}
+
+fn remove_entries(content: &[u8], entries: &[Entry], indices: &[usize]) -> Vec<u8> {
     let mut removed: Vec<&Range<usize>> =
         indices.iter().map(|&index| &entries[index].bytes).collect();
     removed.sort_by_key(|bytes| bytes.start);
@@ -146,18 +167,6 @@ fn without(content: &[u8], entries: &[Entry], indices: &[usize]) -> Vec<u8> {
 
     kept.extend_from_slice(&content[position..]);
     kept
-}
-
-fn is_timestamp(line: &[u8]) -> bool {
-    let line = line.strip_suffix(b"\n").unwrap_or(line);
-
-    line.len() > 1 && line[0] == b'#' && line[1..].iter().all(u8::is_ascii_digit)
-}
-
-fn display(text: &str) -> String {
-    text.chars()
-        .map(|char| if char.is_control() { ' ' } else { char })
-        .collect()
 }
 
 fn write_atomically(path: &Path, content: &[u8]) -> io::Result<()> {
@@ -204,15 +213,39 @@ mod tests {
 
     use super::*;
 
+    // A file in the temp directory, removed when dropped, also when the test fails
+    struct TempFile {
+        path: PathBuf,
+    }
+
+    impl TempFile {
+        fn new(name: &str, content: &str) -> Self {
+            let path = env::temp_dir().join(format!("hdf-test-{name}-{}", std::process::id()));
+            fs::write(&path, content).unwrap();
+
+            Self { path }
+        }
+
+        fn read(&self) -> String {
+            fs::read_to_string(&self.path).unwrap()
+        }
+    }
+
+    impl Drop for TempFile {
+        fn drop(&mut self) {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
+
     fn commands(content: &str) -> Vec<String> {
         parse(content.as_bytes())
             .into_iter()
-            .map(|entry| entry.command)
+            .map(|entry| entry.text)
             .collect()
     }
 
     fn removing(content: &str, indices: &[usize]) -> String {
-        String::from_utf8(without(
+        String::from_utf8(remove_entries(
             content.as_bytes(),
             &parse(content.as_bytes()),
             indices,
@@ -277,55 +310,16 @@ mod tests {
     }
 
     #[test]
-    fn creates_files_only_the_owner_can_read() {
-        let path = env::temp_dir().join(format!("hdf-test-private-{}", std::process::id()));
-        fs::write(&path, "left by a killed run").unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
-
-        create_private(&path).unwrap();
-        let metadata = fs::metadata(&path).unwrap();
-        fs::remove_file(&path).unwrap();
-
-        assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
-        assert_eq!(metadata.len(), 0);
-    }
-
-    #[test]
-    fn refuses_to_delete_when_a_line_joined_the_last_one() {
-        let path = env::temp_dir().join(format!("hdf-test-joined-{}", std::process::id()));
-        fs::write(&path, "a\nb").unwrap();
-        let history = History::load(&path).unwrap();
-        fs::write(&path, "a\nbc\n").unwrap();
-
-        let result = history.delete(&[1]);
-        let content = fs::read_to_string(&path).unwrap();
-        fs::remove_file(&path).unwrap();
-
-        assert!(result.is_err());
-        assert_eq!(content, "a\nbc\n");
-    }
-
-    #[test]
-    fn deletes_from_a_file_without_a_final_newline_left_alone() {
-        let path = env::temp_dir().join(format!("hdf-test-no-newline-{}", std::process::id()));
-        fs::write(&path, "a\nb").unwrap();
-        let history = History::load(&path).unwrap();
-
-        history.delete(&[1]).unwrap();
-        let content = fs::read_to_string(&path).unwrap();
-        fs::remove_file(&path).unwrap();
-
-        assert_eq!(content, "a\n");
-    }
-
-    #[test]
     fn reads_timestamps() {
         let times: Vec<_> = parse(b"ls\n#1700000000\npwd\n#1700000001\nfor x\ndo\n")
             .into_iter()
             .map(|entry| entry.time)
             .collect();
 
-        assert_eq!(times, [None, Some(1700000000), Some(1700000001), None]);
+        assert_eq!(
+            times,
+            [None, Some(1_700_000_000), Some(1_700_000_001), None]
+        );
     }
 
     #[test]
@@ -355,5 +349,37 @@ mod tests {
     #[test]
     fn removes_several_entries_in_any_order() {
         assert_eq!(removing("a\nb\nc\nd\n", &[3, 0, 2]), "b\n");
+    }
+
+    #[test]
+    fn creates_files_only_the_owner_can_read() {
+        let file = TempFile::new("private", "left by a killed run");
+        fs::set_permissions(&file.path, fs::Permissions::from_mode(0o644)).unwrap();
+
+        create_private(&file.path).unwrap();
+        let metadata = fs::metadata(&file.path).unwrap();
+
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+        assert_eq!(metadata.len(), 0);
+    }
+
+    #[test]
+    fn refuses_to_delete_when_a_line_joined_the_last_one() {
+        let file = TempFile::new("joined", "a\nb");
+        let history = History::load(&file.path).unwrap();
+        fs::write(&file.path, "a\nbc\n").unwrap();
+
+        assert!(history.delete(&[1]).is_err());
+        assert_eq!(file.read(), "a\nbc\n");
+    }
+
+    #[test]
+    fn deletes_from_a_file_without_a_final_newline_left_alone() {
+        let file = TempFile::new("no-newline", "a\nb");
+        let history = History::load(&file.path).unwrap();
+
+        history.delete(&[1]).unwrap();
+
+        assert_eq!(file.read(), "a\n");
     }
 }

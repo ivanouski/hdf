@@ -9,6 +9,8 @@ use ratatui::style::{Color, Modifier, Style};
 use serde::Deserialize;
 use serde::de::{self, Deserializer, MapAccess, Visitor};
 
+use crate::context::Context;
+
 // The defaults as a config file, for --help and --init-config. A test keeps them the same as
 // Theme::default.
 pub const DEFAULT: &str = r#"[colors]
@@ -75,7 +77,7 @@ impl Config {
         };
 
         match fs::read_to_string(&path) {
-            Ok(text) => Self::parse(&text).map_err(|error| format!("{}: {error}", path.display())),
+            Ok(text) => Self::parse(&text).context(path.display()),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Self::default()),
             Err(error) => Err(format!("cannot read {}: {error}", path.display())),
         }
@@ -84,24 +86,24 @@ impl Config {
     // Writes the defaults to the config file, never over one already there, returns its path
     pub fn init() -> Result<PathBuf, String> {
         let path = path().ok_or("XDG_CONFIG_HOME and HOME are not set")?;
-        let error = |error: io::Error| format!("cannot create {}: {error}", path.display());
+        let cannot_create = |error: io::Error| format!("cannot create {}: {error}", path.display());
 
         if let Some(dir) = path.parent() {
-            fs::create_dir_all(dir).map_err(error)?;
+            fs::create_dir_all(dir).map_err(cannot_create)?;
         }
 
         let mut file = OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&path)
-            .map_err(|failure| match failure.kind() {
+            .map_err(|error| match error.kind() {
                 io::ErrorKind::AlreadyExists => format!("{} already exists", path.display()),
-                _ => error(failure),
+                _ => cannot_create(error),
             })?;
         // A half-written file would be taken for a config the next time, by hdf and by itself
-        if let Err(failure) = file.write_all(DEFAULT.as_bytes()) {
+        if let Err(error) = file.write_all(DEFAULT.as_bytes()) {
             let _ = fs::remove_file(&path);
-            return Err(error(failure));
+            return Err(cannot_create(error));
         }
 
         Ok(path)

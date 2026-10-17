@@ -1,9 +1,14 @@
 use std::collections::HashMap;
+use std::mem;
 use std::ops::Range;
 
 use chrono::{DateTime, Local};
 
 use crate::history::Entry;
+
+const TIME_FORMAT: &str = "%Y-%m-%d %H:%M";
+// The width of every time, years have four digits
+pub const TIME_WIDTH: usize = "2023-11-14 22:13".len();
 
 // A distinct command and every history entry holding it, most recent first
 pub struct Command {
@@ -13,11 +18,11 @@ pub struct Command {
     pub original: String,
     // Local time of the most recent entry with a timestamp
     pub time: Option<String>,
-    pub entries: Vec<usize>,
+    pub entry_indices: Vec<usize>,
 }
 
 pub struct Match {
-    pub command: usize,
+    pub command_index: usize,
     // Bytes of the command matched by the query, for highlighting
     pub range: Range<usize>,
 }
@@ -36,12 +41,12 @@ impl Finder {
 
         // Bash keeps the trailing space of a completed word, so `ls ` and `ls` count as one command
         for (index, entry) in entries.iter().enumerate().rev() {
-            let text = entry.command.trim_end();
+            let text = entry.text.trim_end();
 
             match positions.get(text) {
                 Some(&position) => {
                     let command = &mut commands[position];
-                    command.entries.push(index);
+                    command.entry_indices.push(index);
                     command.time = command.time.take().or_else(|| local_time(entry.time?));
                 }
                 None => {
@@ -50,7 +55,7 @@ impl Finder {
                         text: text.to_string(),
                         original: entry.original.clone(),
                         time: entry.time.and_then(local_time),
-                        entries: vec![index],
+                        entry_indices: vec![index],
                     });
                 }
             }
@@ -62,23 +67,30 @@ impl Finder {
             matches: Vec::new(),
             selected: 0,
         };
-        finder.update();
+        finder.refilter();
         finder
+    }
+
+    // Rebuilds the commands from reloaded entries, keeping the query and the selection
+    pub fn reload(&mut self, entries: &[Entry]) {
+        let selected = self.selected;
+        *self = Self::new(entries, mem::take(&mut self.query));
+        self.select(selected);
     }
 
     pub fn push(&mut self, char: char) {
         self.query.push(char);
-        self.update();
+        self.refilter();
     }
 
     pub fn pop(&mut self) {
         self.query.pop();
-        self.update();
+        self.refilter();
     }
 
     pub fn clear(&mut self) {
         self.query.clear();
-        self.update();
+        self.refilter();
     }
 
     pub fn up(&mut self) {
@@ -86,29 +98,32 @@ impl Finder {
     }
 
     pub fn down(&mut self) {
-        self.selected = (self.selected + 1).min(self.matches.len().saturating_sub(1));
-    }
-
-    // Moves the selection, staying within the matches
-    pub fn select(&mut self, index: usize) {
-        self.selected = index.min(self.matches.len().saturating_sub(1));
+        self.select(self.selected + 1);
     }
 
     pub fn selection(&self) -> Option<&Command> {
         self.matches
             .get(self.selected)
-            .map(|found| &self.commands[found.command])
+            .map(|found| &self.commands[found.command_index])
     }
 
-    fn update(&mut self) {
+    // Moves the selection, staying within the matches
+    fn select(&mut self, index: usize) {
+        self.selected = index.min(self.matches.len().saturating_sub(1));
+    }
+
+    fn refilter(&mut self) {
         self.matches = self
             .commands
             .iter()
             .enumerate()
-            .filter_map(|(command, Command { text, .. })| {
+            .filter_map(|(command_index, Command { text, .. })| {
                 let range = find(text, &self.query)?;
 
-                Some(Match { command, range })
+                Some(Match {
+                    command_index,
+                    range,
+                })
             })
             .collect();
         self.selected = 0;
@@ -118,7 +133,7 @@ impl Finder {
 fn local_time(seconds: i64) -> Option<String> {
     let time = DateTime::from_timestamp(seconds, 0)?.with_timezone(&Local);
 
-    Some(time.format("%Y-%m-%d %H:%M").to_string())
+    Some(time.format(TIME_FORMAT).to_string())
 }
 
 // Case-insensitive substring search
@@ -151,6 +166,12 @@ fn fold(char: char) -> char {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn formats_times_as_wide_as_the_column() {
+        assert_eq!(local_time(0).unwrap().len(), TIME_WIDTH);
+        assert_eq!(local_time(1_700_000_000).unwrap().len(), TIME_WIDTH);
+    }
 
     #[test]
     fn finds_substrings_ignoring_case() {
