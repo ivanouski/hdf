@@ -4,8 +4,8 @@ require 'timeout'
 
 # Runs a command in a pseudo terminal and keeps a model of its screen, so tests can type keys
 # and read what a user would see. The model knows the escape sequences ratatui sends through
-# crossterm: cursor moves, clearing, styles (ignored), and the cursor position query, which it
-# answers the way a terminal would.
+# crossterm: cursor moves, clearing, styles (ignored, the raw output keeps them), and the cursor
+# position query, which it answers the way a terminal would.
 class TerminalSession
   TIMEOUT = 5
 
@@ -18,6 +18,7 @@ class TerminalSession
     @row = start_row - 1
     @column = 0
     @raw = +''
+    @output = +''
     @mutex = Mutex.new
     @reader, @writer, @pid = PTY.spawn(env, 'sh', '-c', %(stty rows #{rows} cols #{columns} && exec "$0" "$@"), *command)
     @pump = Thread.new { pump }
@@ -51,6 +52,11 @@ class TerminalSession
   # The screen as lines with trailing spaces removed
   def screen
     @mutex.synchronize { @grid.map { |row| row.join.rstrip } }
+  end
+
+  # Everything the command wrote, escape sequences included
+  def output
+    @mutex.synchronize { @output.dup }
   end
 
   def wait_for(timeout: TIMEOUT)
@@ -101,6 +107,7 @@ class TerminalSession
 
   def feed(chunk)
     @raw << chunk.dup.force_encoding(Encoding::UTF_8)
+    @output << chunk.dup.force_encoding(Encoding::UTF_8)
 
     # A lone escape or an unfinished sequence at the end waits for the next chunk
     while (match = TOKEN.match(@raw))

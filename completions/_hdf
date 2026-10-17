@@ -1,0 +1,34 @@
+#!/bin/bash
+
+_hdf() {
+  local current="${COMP_WORDS[COMP_CWORD]}"
+  local word index print_query=""
+  local -a candidates=()
+
+  for (( index = 1; index < COMP_CWORD; index++ )); do
+    word="${COMP_WORDS[index]}"
+    case "${word}" in
+      # Everything after -- is the query, and these exit before searching
+      --|-h|--help|-V|--version|--init-config)
+        COMPREPLY=()
+        return 0
+        ;;
+      --print-query) print_query=1 ;;
+    esac
+  done
+
+  # Other words are the query, free text
+  case "${current}" in
+    --*)
+      [[ -z "${print_query}" ]] && candidates+=(--print-query)
+      (( COMP_CWORD == 1 )) && candidates+=(--init-config --help --version)
+      ;;
+    -*) (( COMP_CWORD == 1 )) && candidates+=(-h -V) ;;
+  esac
+
+  COMPREPLY=( $(compgen -W "${candidates[*]}" -- "${current}") )
+
+  return 0
+}
+
+complete -F _hdf hdf

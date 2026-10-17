@@ -1,3 +1,4 @@
+mod config;
 mod finder;
 mod history;
 mod ui;
@@ -20,6 +21,7 @@ use ratatui::layout::{Position, Rect};
 use ratatui::widgets::ListState;
 use ratatui::{Terminal, TerminalOptions, Viewport};
 
+use config::{Config, Theme};
 use finder::Finder;
 use history::History;
 
@@ -39,6 +41,7 @@ prompt line, or the query as edited when leaving with Esc.
 Options:
   --print-query  when quitting with Esc, or Enter and Tab without matches, print the query
                  as last edited and exit with 3
+  --init-config  write the default colors to the config file, unless it exists
   -h, --help     print this help
   -V, --version  print the version
   --             end of options, the rest is the query
@@ -51,11 +54,20 @@ Keys:
   Esc                       quit, exits with 1 (3 with --print-query)
   Ctrl-C                    quit, exits with 130
 
+Colors:
+  $XDG_CONFIG_HOME/hdf/config.toml, or ~/.config/hdf/config.toml, sets the colors. Each is
+  a color for the text, or a table of fg, bg, bold, italic, underlined and reversed. Colors
+  are names like yellow and light-blue, 0 to 255, or #rrggbb. The defaults, which
+  --init-config writes:
+
+{defaults}
+
 Errors exit with 2. SIGINT, SIGTERM and SIGHUP close the pane and exit with 128 + the signal.
 ";
 
 enum Args {
     Search { query: String, print_query: bool },
+    InitConfig,
     Help,
     Version,
 }
@@ -93,8 +105,16 @@ fn main() -> ExitCode {
 fn run() -> Result<ExitCode, String> {
     let (query, print_query) = match parse_args()? {
         Args::Search { query, print_query } => (query, print_query),
+        Args::InitConfig => {
+            println!("{}", Config::init()?.display());
+            return Ok(ExitCode::SUCCESS);
+        }
         Args::Help => {
-            print!("{USAGE}");
+            let defaults: String = config::DEFAULT
+                .lines()
+                .map(|line| format!("    {line}\n"))
+                .collect();
+            print!("{}", USAGE.replace("{defaults}\n", &defaults));
             return Ok(ExitCode::SUCCESS);
         }
         Args::Version => {
@@ -103,13 +123,14 @@ fn run() -> Result<ExitCode, String> {
         }
     };
 
+    let config = Config::load()?;
     let path = history_path()?;
     let mut history =
         History::load(&path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
     let mut finder = Finder::new(history.entries(), query);
 
-    let outcome =
-        pick(&mut finder, &mut history).map_err(|error| format!("terminal error: {error}"))?;
+    let outcome = pick(&mut finder, &mut history, &config.colors)
+        .map_err(|error| format!("terminal error: {error}"))?;
 
     match outcome {
         Outcome::Picked(command) => {
@@ -136,6 +157,7 @@ fn parse_args() -> Result<Args, String> {
             "--" if options => options = false,
             "-h" | "--help" if options => return Ok(Args::Help),
             "-V" | "--version" if options => return Ok(Args::Version),
+            "--init-config" if options => return Ok(Args::InitConfig),
             "--print-query" if options => print_query = true,
             option if options && option.starts_with('-') && option.len() > 1 => {
                 return Err(format!(
@@ -206,7 +228,7 @@ fn dup2(from: i32, to: i32) -> io::Result<()> {
 }
 
 // Runs the finder in a pane under the cursor's line, returns how it was left
-fn pick(finder: &mut Finder, history: &mut History) -> io::Result<Outcome> {
+fn pick(finder: &mut Finder, history: &mut History, theme: &Theme) -> io::Result<Outcome> {
     // Draw on the terminal itself so the finder works with stdout captured
     let mut tty = OpenOptions::new().read(true).write(true).open("/dev/tty")?;
     let _stdout = StdoutToTty::new(&tty)?;
@@ -242,7 +264,7 @@ fn pick(finder: &mut Finder, history: &mut History) -> io::Result<Outcome> {
     let outcome = loop {
         terminal.draw(|frame| {
             area = frame.area();
-            ui::draw(frame, finder, status.as_ref(), &mut list);
+            ui::draw(frame, finder, theme, status.as_ref(), &mut list);
         })?;
 
         let Some(event) = next_event(&signal)? else {
