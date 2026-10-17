@@ -1,35 +1,26 @@
 #!/bin/bash
 
-# Page Up and Page Down open hdf with the typed text as the query: Enter and Tab put the chosen command on the
-# line, Esc puts the query back as edited there, Ctrl-C leaves the line as it was, Ctrl-D deletes
-# commands from history. Stowed to ~/.hdfrc, load it in .bashrc with:
+# Load from .bashrc with:
 #   [[ -f ~/.hdfrc ]] && . ~/.hdfrc
-#
-# Deleted commands leave this shell's history at the next prompt when PROMPT_COMMAND reloads it
-# (history -a; history -c; history -r). Reloading here would clash with readline, which writes
-# the edited line back over a history entry when the binding returns.
 
-# Key bindings need an interactive shell, and hdf itself
 [[ $- == *i* ]] || return
 command -v hdf > /dev/null || return
 
 __hdf_search() {
   local line status
 
-  # Save this shell's new commands first so they can be found
   history -a
-
+  # HISTFILE isn't exported by default
   line=$(HISTFILE=${HISTFILE} hdf --print-query -- "${READLINE_LINE}")
   status=$?
 
-  # 0 prints the picked command, 3 the query left with Esc. Anything else leaves the line as it
-  # was: Ctrl-C (130), errors (2), and an hdf too old for --print-query, which fails with 1.
-  # An unchanged line keeps the cursor where it was.
+  # 0: picked command, 3: query left with Esc; anything else keeps the line
   if (( status == 0 || status == 3 )) && [[ ${line} != "${READLINE_LINE}" ]]; then
     READLINE_LINE=${line}
     READLINE_POINT=${#line}
   fi
 }
 
+# Page Up / Page Down search history with hdf.
 bind -x '"\e[5~": __hdf_search'
 bind -x '"\e[6~": __hdf_search'

@@ -28,41 +28,30 @@ use history::History;
 const HEIGHT: u16 = 12;
 
 const USAGE: &str = "\
-Usage: hdf [QUERY]
+Usage: hdf [OPTIONS] [QUERY]
 
-Searches bash history in $HISTFILE and prints the chosen command. Commands can be deleted
-from the history on the way, every occurrence of them.
-
-The query matches commands containing it, ignoring case.
-
-~/.hdfrc, sourced from .bashrc, opens hdf on Page Up and Page Down and puts the chosen command on the
-prompt line, or the query as edited when leaving with Esc.
+Search bash history in $HISTFILE and print the chosen command. The query matches
+case-insensitively.
 
 Options:
-  --print-query  when quitting with Esc, or Enter and Tab without matches, print the query
-                 as last edited and exit with 3
-  --init-config  write the default colors to the config file, unless it exists
+  --print-query  on Esc, print the query and exit with 3
+  --init-config  write the default config, unless it exists
   -h, --help     print this help
   -V, --version  print the version
-  --             end of options, the rest is the query
 
 Keys:
   Up, Down, Ctrl-P, Ctrl-N  move the selection
-  Enter, Tab                print the selected command; without matches, quit like Esc
-  Ctrl-D                    delete the selected command, every occurrence of it
+  Enter, Tab                print the selected command
+  Ctrl-D                    delete the selected command from history
   Backspace, Ctrl-U         delete a character, clear the query
-  Esc                       quit, exits with 1 (3 with --print-query)
-  Ctrl-C                    quit, exits with 130
+  Esc                       quit, exit with 1
+  Ctrl-C                    quit, exit with 130
 
-Colors:
-  $XDG_CONFIG_HOME/hdf/config.toml, or ~/.config/hdf/config.toml, sets the colors. Each is
-  a color for the text, or a table of fg, bg, bold, italic, underlined and reversed. Colors
-  are names like yellow and light-blue, 0 to 255, or #rrggbb. The defaults, which
-  --init-config writes:
+Config: $XDG_CONFIG_HOME/hdf/config.toml, defaults:
 
 {defaults}
 
-Errors exit with 2. SIGINT, SIGTERM and SIGHUP close the pane and exit with 128 + the signal.
+Errors exit with 2, signals with 128 + the signal.
 ";
 
 enum Args {
