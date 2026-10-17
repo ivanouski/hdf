@@ -1,12 +1,12 @@
 [package]
 name = "hdf"
-version = "0.7.4"
+version = "0.7.6"
 edition = "2024"
 
 [dependencies]
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
-libc = "0.2"
 ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
+rustix = { version = "1", default-features = false, features = ["std", "stdio"] }
 serde = { version = "1", features = ["derive"] }
 signal-hook = "0.3"
 toml = "1"

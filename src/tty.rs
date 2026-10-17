@@ -1,5 +1,5 @@
 use std::io::{self, Write};
-use std::os::fd::{AsFd, AsRawFd, OwnedFd};
+use std::os::fd::{AsFd, OwnedFd};
 use std::process;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -8,6 +8,8 @@ use std::time::Duration;
 
 use ratatui::crossterm::event::{self, Event};
 use ratatui::crossterm::terminal;
+use rustix::stdio::dup2_stdout;
+use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
 
 pub struct RawMode;
 
@@ -31,9 +33,9 @@ pub struct StdoutToTty {
 }
 
 impl StdoutToTty {
-    pub fn new(tty: &impl AsRawFd) -> io::Result<Self> {
+    pub fn new(tty: &impl AsFd) -> io::Result<Self> {
         let saved = io::stdout().as_fd().try_clone_to_owned()?;
-        dup2(tty.as_raw_fd(), libc::STDOUT_FILENO)?;
+        dup2_stdout(tty)?;
         Ok(Self { saved })
     }
 }
@@ -41,15 +43,7 @@ impl StdoutToTty {
 impl Drop for StdoutToTty {
     fn drop(&mut self) {
         let _ = io::stdout().flush();
-        let _ = dup2(self.saved.as_raw_fd(), libc::STDOUT_FILENO);
-    }
-}
-
-fn dup2(from: i32, to: i32) -> io::Result<()> {
-    // SAFETY: dup2 only takes file descriptors; both are open for the duration of the call
-    match unsafe { libc::dup2(from, to) } {
-        -1 => Err(io::Error::last_os_error()),
-        _ => Ok(()),
+        let _ = dup2_stdout(&self.saved);
     }
 }
 
@@ -59,7 +53,7 @@ fn dup2(from: i32, to: i32) -> io::Result<()> {
 pub fn watch_signals() -> io::Result<Arc<AtomicUsize>> {
     let signal = Arc::new(AtomicUsize::new(0));
 
-    for number in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
+    for number in [SIGINT, SIGTERM, SIGHUP] {
         signal_hook::flag::register_usize(number, Arc::clone(&signal), number as usize)?;
     }
 
@@ -82,7 +76,7 @@ fn exit_when_stuck(signal: Arc<AtomicUsize>) {
             // Orphaned: the shell is gone, maybe without a signal reaching hdf. Taken for SIGHUP,
             // so a loop that is not stuck closes the pane and restores the terminal.
             if std::os::unix::process::parent_id() != parent {
-                let hangup = libc::SIGHUP as usize;
+                let hangup = SIGHUP as usize;
                 let _ = signal.compare_exchange(0, hangup, Ordering::Relaxed, Ordering::Relaxed);
             }
 
