@@ -577,6 +577,23 @@ class HdfTest < Minitest::Test
     end
   end
 
+  # crossterm keeps reading a closed terminal, so hdf has to exit for the SIGHUP on its own
+  def test_exits_when_the_terminal_closes
+    start('clau')
+
+    assert_equal 129, @session.hang_up.exitstatus
+  end
+
+  # hdf under a shell that is not the session leader, so killing that shell sends hdf no SIGHUP
+  def test_closes_the_pane_when_its_shell_is_gone
+    start(command: ['sh', '-c', %q(sh -c '"$0" "$@"; :' "$0" "$@"; sleep 5), HDF, 'clau'])
+    shell = Integer(`pgrep -P #{@session.pid} -x sh`)
+
+    Process.kill('KILL', shell)
+
+    @session.wait_for { |lines| lines.none? { |line| line.start_with?('> ') } }
+  end
+
   def test_scrolls_the_screen_when_opened_at_the_bottom
     start('clau', start_row: 24)
 

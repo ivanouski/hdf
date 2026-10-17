@@ -9,9 +9,10 @@ use std::io::{self, Write};
 use std::mem;
 use std::os::fd::{AsFd, AsRawFd, OwnedFd};
 use std::path::PathBuf;
-use std::process::ExitCode;
+use std::process::{self, ExitCode};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::thread;
 use std::time::Duration;
 
 use ratatui::backend::{Backend, ClearType, CrosstermBackend};
@@ -121,9 +122,7 @@ fn run() -> Result<ExitCode, String> {
     };
 
     let config = Config::load()?;
-    let path = history_path()?;
-    let mut history =
-        History::load(&path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    let mut history = load_history()?;
     let mut finder = Finder::new(history.entries(), query);
 
     let outcome = pick(&mut finder, &mut history, &config.colors)
@@ -197,9 +196,7 @@ fn usage_error(message: &str) -> String {
 
 // Prints the deleted commands, oldest first. Fewer commands than asked for deletes them all.
 fn delete_last(count: usize) -> Result<(), String> {
-    let path = history_path()?;
-    let history =
-        History::load(&path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    let history = load_history()?;
     let entries = history.entries();
     let indices: Vec<usize> = (entries.len().saturating_sub(count)..entries.len()).collect();
 
@@ -225,6 +222,12 @@ fn delete_last(count: usize) -> Result<(), String> {
 
 fn print_line(text: &str) -> Result<(), String> {
     writeln!(io::stdout(), "{text}").map_err(|error| format!("cannot print: {error}"))
+}
+
+fn load_history() -> Result<History, String> {
+    let path = history_path()?;
+
+    History::load(&path).map_err(|error| format!("cannot read {}: {error}", path.display()))
 }
 
 fn history_path() -> Result<PathBuf, String> {
@@ -314,6 +317,8 @@ fn pick(finder: &mut Finder, history: &mut History, theme: &Theme) -> io::Result
         signal_hook::flag::register_usize(number, Arc::clone(&signal), number as usize)?;
     }
 
+    exit_when_stuck(Arc::clone(&signal));
+
     let outcome = loop {
         terminal.draw(|frame| {
             area = frame.area();
@@ -373,6 +378,34 @@ fn pick(finder: &mut Finder, history: &mut History, theme: &Theme) -> io::Result
         Outcome::Signaled(_) => Ok(outcome),
         _ => cleared.map(|()| outcome),
     }
+}
+
+// crossterm keeps reading a closed terminal and never returns, so the loop in pick never sees the
+// signal that came with closing it. Exits for the signal once the loop has had time to clean up.
+fn exit_when_stuck(signal: Arc<AtomicUsize>) {
+    // Compared with the parent at the start, not with 1: a shell that is PID 1, as in a container,
+    // runs hdf as its child
+    let parent = std::os::unix::process::parent_id();
+
+    thread::spawn(move || {
+        loop {
+            thread::sleep(Duration::from_millis(100));
+
+            // Orphaned: the shell is gone, maybe without a signal reaching hdf. Taken for SIGHUP,
+            // so a loop that is not stuck closes the pane and restores the terminal.
+            if std::os::unix::process::parent_id() != parent {
+                let hangup = libc::SIGHUP as usize;
+                let _ = signal.compare_exchange(0, hangup, Ordering::Relaxed, Ordering::Relaxed);
+            }
+
+            let number = signal.load(Ordering::Relaxed);
+
+            if number != 0 {
+                thread::sleep(Duration::from_millis(500));
+                process::exit(128 + number as i32);
+            }
+        }
+    });
 }
 
 // The next terminal event, or None once a signal arrived

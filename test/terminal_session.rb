@@ -78,21 +78,26 @@ class TerminalSession
     close
   end
 
+  # Closes the terminal without killing anything, like closing its window, and waits for the
+  # process to exit, returns its status
+  def hang_up
+    @reader.close
+    @writer.close
+    wait
+  end
+
   def close
-    Process.kill('KILL', @pid) if alive?
+    # The whole process group, a shell and what it started, which outlives the shell otherwise.
+    # PTY.spawn makes the command the leader of its own session and group.
+    Process.kill('KILL', -@pid)
+  rescue Errno::ESRCH
+    nil
+  ensure
     @reader.close unless @reader.closed?
     @writer.close unless @writer.closed?
-  rescue Errno::ESRCH, Errno::ECHILD
-    nil
   end
 
   private
-
-  def alive?
-    Process.waitpid(@pid, Process::WNOHANG).nil?
-  rescue Errno::ECHILD
-    false
-  end
 
   def pump
     loop do
