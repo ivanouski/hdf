@@ -14,12 +14,13 @@ class HdfCompletionTest < Minitest::Test
   BASH
 
   def test_dash_dash_offers_every_long_option
-    assert_equal %w[--print-query --init-config --help --version], complete('--')
+    assert_equal %w[--print-query --delete-last --init-config --help --version], complete('--')
   end
 
   def test_completes_a_partial_long_option
     assert_equal %w[--print-query], complete('--pr')
     assert_equal %w[--init-config], complete('--i')
+    assert_equal %w[--delete-last], complete('--d')
   end
 
   def test_dash_offers_short_options
@@ -50,6 +51,8 @@ class HdfCompletionTest < Minitest::Test
     assert_empty complete('--version', '--')
     assert_empty complete('-V', '-')
     assert_empty complete('--init-config', '--')
+    assert_empty complete('--delete-last', '--')
+    assert_empty complete('--delete-last', '3', '--')
   end
 
   def test_nothing_follows_double_dash

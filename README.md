@@ -27,6 +27,11 @@ command on the prompt line, Esc puts back the query as edited.
 | Esc                      | quit                                                       |
 | Ctrl-C                   | quit, leaving the prompt line as it was                    |
 
+## Deleting the last commands
+
+`hdf --delete-last` deletes the last command from the history file, `hdf --delete-last 10` the last
+10. It prints the deleted commands.
+
 `hdf --help` lists the options and exit statuses.
 
 ## Config

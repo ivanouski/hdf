@@ -34,10 +34,11 @@ Search bash history in $HISTFILE and print the chosen command. The query matches
 case-insensitively.
 
 Options:
-  --print-query  on Esc, print the query and exit with 3
-  --init-config  write the default config, unless it exists
-  -h, --help     print this help
-  -V, --version  print the version
+  --print-query      on Esc, print the query and exit with 3
+  --delete-last [N]  delete the last N commands from history, 1 by default
+  --init-config      write the default config, unless it exists
+  -h, --help         print this help
+  -V, --version      print the version
 
 Keys:
   Up, Down, Ctrl-P, Ctrl-N  move the selection
@@ -56,6 +57,7 @@ Errors exit with 2, signals with 128 + the signal.
 
 enum Args {
     Search { query: String, print_query: bool },
+    DeleteLast(usize),
     InitConfig,
     Help,
     Version,
@@ -81,6 +83,8 @@ const ERROR_STATUS: u8 = 2;
 const QUERY_STATUS: u8 = 3;
 const ABORT_STATUS: u8 = 130;
 
+const DELETE_LAST_ALONE: &str = "--delete-last takes no other arguments";
+
 fn main() -> ExitCode {
     match run() {
         Ok(status) => status,
@@ -94,6 +98,10 @@ fn main() -> ExitCode {
 fn run() -> Result<ExitCode, String> {
     let (query, print_query) = match parse_args()? {
         Args::Search { query, print_query } => (query, print_query),
+        Args::DeleteLast(count) => {
+            delete_last(count)?;
+            return Ok(ExitCode::SUCCESS);
+        }
         Args::InitConfig => {
             println!("{}", Config::init()?.display());
             return Ok(ExitCode::SUCCESS);
@@ -123,11 +131,11 @@ fn run() -> Result<ExitCode, String> {
 
     match outcome {
         Outcome::Picked(command) => {
-            println!("{command}");
+            print_line(&command)?;
             Ok(ExitCode::SUCCESS)
         }
         Outcome::Quit if print_query => {
-            println!("{}", finder.query);
+            print_line(&finder.query)?;
             Ok(ExitCode::from(QUERY_STATUS))
         }
         Outcome::Quit => Ok(ExitCode::from(QUIT_STATUS)),
@@ -141,17 +149,28 @@ fn parse_args() -> Result<Args, String> {
     let mut options = true;
     let mut print_query = false;
 
-    for arg in env::args().skip(1) {
+    let args: Vec<String> = env::args().skip(1).collect();
+
+    if args.first().is_some_and(|arg| arg == "--delete-last") {
+        return match &args[1..] {
+            [] => Ok(Args::DeleteLast(1)),
+            [count] => parse_count(count).map(Args::DeleteLast),
+            _ => Err(usage_error(DELETE_LAST_ALONE)),
+        };
+    }
+
+    for arg in args {
         match arg.as_str() {
             "--" if options => options = false,
             "-h" | "--help" if options => return Ok(Args::Help),
             "-V" | "--version" if options => return Ok(Args::Version),
             "--init-config" if options => return Ok(Args::InitConfig),
             "--print-query" if options => print_query = true,
+            "--delete-last" if options => {
+                return Err(usage_error(DELETE_LAST_ALONE));
+            }
             option if options && option.starts_with('-') && option.len() > 1 => {
-                return Err(format!(
-                    "invalid option: {option}\nTry 'hdf --help' for usage."
-                ));
+                return Err(usage_error(&format!("invalid option: {option}")));
             }
             _ => words.push(arg),
         }
@@ -161,6 +180,51 @@ fn parse_args() -> Result<Args, String> {
         query: words.join(" "),
         print_query,
     })
+}
+
+// Digits only, so a sign or an option in its place is rejected
+fn parse_count(count: &str) -> Result<usize, String> {
+    Some(count)
+        .filter(|count| !count.is_empty() && count.bytes().all(|byte| byte.is_ascii_digit()))
+        .and_then(|count| count.parse().ok())
+        .filter(|&count| count > 0)
+        .ok_or_else(|| usage_error(&format!("invalid count: {count}")))
+}
+
+fn usage_error(message: &str) -> String {
+    format!("{message}\nTry 'hdf --help' for usage.")
+}
+
+// Prints the deleted commands, oldest first. Fewer commands than asked for deletes them all.
+fn delete_last(count: usize) -> Result<(), String> {
+    let path = history_path()?;
+    let history =
+        History::load(&path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    let entries = history.entries();
+    let indices: Vec<usize> = (entries.len().saturating_sub(count)..entries.len()).collect();
+
+    if indices.is_empty() {
+        return Ok(());
+    }
+
+    history
+        .delete(&indices)
+        .map_err(|error| format!("cannot delete: {error}"))?;
+
+    // The commands are already deleted, so a closed stdout is no reason to fail
+    let mut stdout = io::stdout().lock();
+
+    for &index in &indices {
+        if writeln!(stdout, "{}", entries[index].original).is_err() {
+            break;
+        }
+    }
+
+    Ok(())
+}
+
+fn print_line(text: &str) -> Result<(), String> {
+    writeln!(io::stdout(), "{text}").map_err(|error| format!("cannot print: {error}"))
 }
 
 fn history_path() -> Result<PathBuf, String> {

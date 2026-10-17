@@ -427,6 +427,82 @@ class HdfTest < Minitest::Test
     assert_equal "ls\n", File.read(File.join(@tmp_dir, '.bash_history'))
   end
 
+  def test_delete_last_deletes_the_last_command
+    stdout, stderr, status = run_hdf('--delete-last')
+
+    assert status.success?
+    assert_empty stderr
+    assert_equal "gg\n", stdout
+    assert_equal HISTORY.lines[0...-1].join, File.read(@history)
+  end
+
+  def test_delete_last_deletes_the_last_n_commands_only
+    stdout, _, status = run_hdf('--delete-last', '3')
+
+    assert status.success?
+    assert_equal "git push \nClaude\ngg\n", stdout
+    assert_equal HISTORY.lines[0...-3].join, File.read(@history)
+  end
+
+  def test_delete_last_deletes_timestamps_with_their_commands
+    File.write(@history, "#1\nls\n#2\nfor x\ndo\n")
+    stdout, _, status = run_hdf('--delete-last')
+
+    assert status.success?
+    assert_equal "for x\ndo\n", stdout
+    assert_equal "#1\nls\n", File.read(@history)
+  end
+
+  def test_delete_last_deletes_everything_when_asked_for_more
+    run_hdf('--delete-last', '100')
+
+    assert_empty File.read(@history)
+  end
+
+  def test_delete_last_rejects_an_invalid_count
+    %w[0 x 2x -3 +2 --help].each do |count|
+      _, stderr, status = run_hdf('--delete-last', count)
+
+      assert_equal 2, status.exitstatus
+      assert_equal "hdf: invalid count: #{count}\nTry 'hdf --help' for usage.\n", stderr
+      assert_equal HISTORY, File.read(@history)
+    end
+  end
+
+  def test_delete_last_takes_no_other_arguments
+    [%w[--delete-last 3 foo], %w[docker --delete-last], %w[--print-query --delete-last]].each do |args|
+      _, stderr, status = run_hdf(*args)
+
+      assert_equal 2, status.exitstatus
+      assert_equal "hdf: --delete-last takes no other arguments\nTry 'hdf --help' for usage.\n", stderr
+      assert_equal HISTORY, File.read(@history)
+    end
+  end
+
+  def test_delete_last_leaves_an_empty_history_alone
+    File.write(@history, "\n")
+    inode = File.stat(@history).ino
+    stdout, _, status = run_hdf('--delete-last')
+
+    assert status.success?
+    assert_empty stdout
+    assert_equal inode, File.stat(@history).ino
+  end
+
+  # Writing to a pipe without a reader fails, a closed stdout would not: Rust ignores EBADF on stdout
+  def test_delete_last_succeeds_when_the_reader_is_gone
+    reader, writer = IO.pipe
+    reader.close
+    stderr = File.join(@tmp_dir, 'stderr')
+    pid = Process.spawn({ 'HISTFILE' => @history }, HDF, '--delete-last', '3', out: writer, err: stderr)
+    writer.close
+    Process.wait(pid)
+
+    assert $?.success?
+    assert_empty File.read(stderr)
+    assert_equal HISTORY.lines[0...-3].join, File.read(@history)
+  end
+
   # Timestamps
 
   def test_shows_when_each_command_last_ran
@@ -879,7 +955,7 @@ class HdfTest < Minitest::Test
 
     assert status.success?
     assert_empty stderr
-    assert_match(/\AUsage: hdf \[QUERY\]$/, stdout)
+    assert_match(/\AUsage: hdf \[OPTIONS\] \[QUERY\]$/, stdout)
   end
 
   def test_prints_the_version

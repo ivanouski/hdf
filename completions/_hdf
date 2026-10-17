@@ -9,7 +9,7 @@ _hdf() {
     word="${COMP_WORDS[index]}"
     case "${word}" in
       # Everything after -- is the query, and these exit before searching
-      --|-h|--help|-V|--version|--init-config)
+      --|-h|--help|-V|--version|--init-config|--delete-last)
         COMPREPLY=()
         return 0
         ;;
@@ -21,7 +21,7 @@ _hdf() {
   case "${current}" in
     --*)
       [[ -z "${print_query}" ]] && candidates+=(--print-query)
-      (( COMP_CWORD == 1 )) && candidates+=(--init-config --help --version)
+      (( COMP_CWORD == 1 )) && candidates+=(--delete-last --init-config --help --version)
       ;;
     -*) (( COMP_CWORD == 1 )) && candidates+=(-h -V) ;;
   esac
