@@ -15,6 +15,7 @@ Options:
 
 Keys:
   Up, Down, Ctrl-P, Ctrl-N  move the selection
+  PgUp, PgDn                move the selection, like Up and Down
   Enter, Tab                print the selected command
   Ctrl-D                    delete the selected command from history
   Backspace, Ctrl-U         delete a character, clear the query

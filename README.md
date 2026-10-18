@@ -21,6 +21,7 @@ command on the prompt line, Esc puts back the query as edited.
 | Key                      | Action                                                     |
 | ------------------------ | ---------------------------------------------------------- |
 | Up, Down, Ctrl-P, Ctrl-N | move the selection                                         |
+| PgUp, PgDn               | move the selection, like Up and Down                       |
 | Enter, Tab               | print the selected command; without matches, quit like Esc |
 | Ctrl-D                   | delete the selected command, every occurrence of it        |
 | Backspace, Ctrl-U        | delete a character, clear the query                        |

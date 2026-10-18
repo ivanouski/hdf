@@ -184,8 +184,8 @@ fn handle_key(
             });
         }
         (KeyCode::Char('d'), true) => return Continue(delete(finder, history)),
-        (KeyCode::Up, _) | (KeyCode::Char('p'), true) => finder.up(),
-        (KeyCode::Down, _) | (KeyCode::Char('n'), true) => finder.down(),
+        (KeyCode::Up | KeyCode::PageUp, _) | (KeyCode::Char('p'), true) => finder.up(),
+        (KeyCode::Down | KeyCode::PageDown, _) | (KeyCode::Char('n'), true) => finder.down(),
         (KeyCode::Backspace, _) => finder.pop(),
         (KeyCode::Char('u'), true) => finder.clear(),
         // Alt and a letter is a shortcut elsewhere, not text for the query
@@ -326,7 +326,7 @@ mod tests {
     }
 
     #[test]
-    fn moves_the_selection_with_arrows_and_ctrl_p_n() {
+    fn moves_the_selection_with_arrows_page_keys_and_ctrl_p_n() {
         let mut session = Session::open("move");
 
         for (code, modifiers, selected) in [
@@ -336,6 +336,8 @@ mod tests {
             (KeyCode::Down, NONE, 2),
             (KeyCode::Up, NONE, 1),
             (KeyCode::Char('p'), CONTROL, 0),
+            (KeyCode::PageDown, NONE, 1),
+            (KeyCode::PageUp, NONE, 0),
         ] {
             session.edit(code, modifiers);
             assert_eq!(session.finder.selected, selected);
