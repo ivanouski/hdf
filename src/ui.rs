@@ -73,8 +73,10 @@ fn draw_prompt_line(
     let mut line = shell_prompt
         .cloned()
         .unwrap_or_else(|| Line::from(Span::styled("> ", theme.prompt)));
-    let cursor = line.width() + Span::raw(&finder.query[..finder.cursor]).width();
-    line.push_span(Span::raw(&finder.query));
+    let room = usize::from(area.width).saturating_sub(line.width());
+    let (shown, column) = scroll(&finder.query, finder.cursor, room);
+    let cursor = line.width() + column;
+    line.push_span(Span::raw(shown));
 
     // The prompt goes over the count, so a long query stays readable
     frame.set_cursor_position((area.x + cursor as u16, area.y));
@@ -83,6 +85,24 @@ fn draw_prompt_line(
         area,
     );
     frame.render_widget(Paragraph::new(line), area);
+}
+
+// The query as room columns show it, and the column of the cursor in it. A cursor past the room
+// keeps to the last column, the text before it cut from the start with … in its place. The space
+// after keeps the count from showing under a cursor at the end.
+fn scroll(query: &str, cursor: usize, room: usize) -> (String, usize) {
+    let column = query[..cursor].width();
+
+    if column < room {
+        return (query.to_string(), column);
+    }
+
+    let start = suffix_start(&query[..cursor], room.saturating_sub(2));
+
+    (
+        format!("{ELLIPSIS}{} ", &query[start..]),
+        ELLIPSIS.width() + query[start..cursor].width(),
+    )
 }
 
 // Matches and commands, or the status in their place
@@ -506,6 +526,56 @@ mod tests {
             .unwrap();
 
         assert_eq!(terminal.get_cursor_position().unwrap(), Position::new(3, 0));
+    }
+
+    fn render_query(query: &str, prompt: Option<&str>, home: bool) -> (Buffer, Position) {
+        let mut finder = Finder::new(&history::parse(b"ls\n"), query.to_string());
+        if home {
+            finder.home();
+        }
+        let prompt = prompt.map(prompt::parse);
+        let mut terminal = Terminal::new(TestBackend::new(20, 4)).unwrap();
+        terminal
+            .draw(|frame| {
+                let list = &mut ListState::default();
+                draw(frame, &finder, &Theme::default(), prompt.as_ref(), None, list);
+            })
+            .unwrap();
+        let cursor = terminal.get_cursor_position().unwrap();
+
+        (terminal.backend().buffer().clone(), cursor)
+    }
+
+    #[test]
+    fn scrolls_a_query_too_long_for_the_line_to_the_cursor() {
+        let (buffer, cursor) = render_query("0123456789abcdefghij", None, false);
+
+        assert_eq!(text(&buffer, 0), "> …456789abcdefghij ");
+        assert_eq!(cursor, Position::new(19, 0));
+    }
+
+    #[test]
+    fn keeps_the_start_of_a_long_query_while_the_cursor_fits() {
+        let (buffer, cursor) = render_query("0123456789abcdefghij", None, true);
+
+        assert_eq!(text(&buffer, 0), "> 0123456789abcdefgh");
+        assert_eq!(cursor, Position::new(2, 0));
+    }
+
+    #[test]
+    fn scrolls_a_long_query_after_the_shell_prompt() {
+        let (buffer, cursor) = render_query("0123456789abcdefghij", Some("dir$ "), false);
+
+        assert_eq!(text(&buffer, 0), "dir$ …789abcdefghij ");
+        assert_eq!(cursor, Position::new(19, 0));
+    }
+
+    #[test]
+    fn scrolls_wide_characters_whole() {
+        let (buffer, cursor) = render_query("日本語のコマンドを検索する", None, false);
+
+        assert_eq!(text(&buffer, 0), "> …マ ン ド を 検 索 す る  ");
+        assert_eq!(cursor, Position::new(19, 0));
     }
 
     #[test]

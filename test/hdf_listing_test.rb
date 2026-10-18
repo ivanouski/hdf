@@ -64,6 +64,16 @@ class HdfListingTest < HdfTestCase
     @session.wait_for_text('> bx run!')
   end
 
+  def test_scrolls_a_long_query_to_the_cursor
+    query = 'docker compose -f deploy/compose.yml up --build'
+    File.write(@history, "#{query} web\n")
+    start(query, columns: 40)
+    @session.type(' web')
+
+    @session.wait_for_text("> …#{"#{query} web"[-36..]}")
+    @session.wait_for { @session.cursor == [0, 39] }
+  end
+
   def test_shows_the_match_of_a_long_command_and_previews_it
     command = 'kubectl apply -f k8s/prod/ --context=prod-eu-west-1 --server-side ' \
               '--force-conflicts && ./deploy.sh notify'
