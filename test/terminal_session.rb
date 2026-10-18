@@ -4,10 +4,6 @@ require 'io/console'
 require 'pty'
 require 'timeout'
 
-# Runs a command in a pseudo terminal and keeps a model of its screen, so tests can type keys
-# and read what a user would see. The model knows the escape sequences ratatui sends through
-# crossterm: cursor moves, clearing, styles (ignored, the raw output keeps them), and the cursor
-# position query, which it answers the way a terminal would.
 class TerminalSession
   TIMEOUT = 5
 
@@ -59,7 +55,6 @@ class TerminalSession
 
   TOKEN = /\A(?:\e\[([?\d;:]*)([@-~])|\e[^\[]|[\r\n\b]|[^\e\r\n\b])/m
 
-  # The screen as lines with trailing spaces removed
   def screen
     @mutex.synchronize { @grid.map { |row| row.join.rstrip } }
   end
@@ -68,7 +63,6 @@ class TerminalSession
     @mutex.synchronize { [@row, @column] }
   end
 
-  # Everything the command wrote, escape sequences included
   def output
     @mutex.synchronize { @output.dup }
   end
@@ -85,15 +79,12 @@ class TerminalSession
     wait_for(timeout:) { |lines| lines.any? { |line| line.include?(text) } }
   end
 
-  # Waits for the process to exit, returns its status
   def wait
     Timeout.timeout(TIMEOUT) { Process.wait2(@pid).last }.tap { @pump.join(TIMEOUT) }
   ensure
     close
   end
 
-  # Closes the terminal without killing anything, like closing its window, and waits for the
-  # process to exit, returns its status
   def hang_up
     @reader.close
     @writer.close
@@ -101,9 +92,8 @@ class TerminalSession
   end
 
   def close
-    # The whole process group, a shell and what it started, which outlives the shell otherwise.
-    # PTY.spawn makes the command the leader of its own session and group.
-    Process.kill('KILL', -@pid)
+    process_group = -@pid
+    Process.kill('KILL', process_group)
   rescue Errno::ESRCH
     nil
   ensure
@@ -126,7 +116,6 @@ class TerminalSession
     @raw << chunk.dup.force_encoding(Encoding::UTF_8)
     @output << chunk.dup.force_encoding(Encoding::UTF_8)
 
-    # A lone escape or an unfinished sequence at the end waits for the next chunk
     while (match = TOKEN.match(@raw))
       @raw = match.post_match
       apply(match)
@@ -167,7 +156,6 @@ class TerminalSession
     end
   end
 
-  # Readline inserts and deletes in the middle of a line by shifting the rest of it
   def insert_blanks(count)
     line = @grid[@row]
     line.insert(@column, *Array.new(count, ' '))

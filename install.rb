@@ -38,7 +38,6 @@ end
 
 $stdout.sync = true
 
-# stow and cargo take the packages and the crate relative to the working directory
 Dir.chdir(__dir__)
 
 Install.new.call

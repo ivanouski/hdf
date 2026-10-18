@@ -5,8 +5,7 @@ require_relative 'test_helper'
 class HdfCompletionTest < Minitest::Test
   COMPLETION = File.join(ROOT, 'completions', '_hdf')
 
-  # Sources the completion, completes the last word and prints the candidates
-  SCRIPT = <<~'BASH'
+  COMPLETE_LAST_WORD = <<~'BASH'
     source "$1"
     shift
     COMP_WORDS=("$@")
@@ -76,7 +75,7 @@ class HdfCompletionTest < Minitest::Test
   private
 
   def complete(*words)
-    stdout, stderr, status = Open3.capture3('bash', '-c', SCRIPT, 'bash', COMPLETION, 'hdf', *words)
+    stdout, stderr, status = Open3.capture3('bash', '-c', COMPLETE_LAST_WORD, 'bash', COMPLETION, 'hdf', *words)
     assert status.success?, stderr
 
     stdout.lines(chomp: true).reject(&:empty?)

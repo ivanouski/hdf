@@ -65,8 +65,8 @@ count    = "dark-gray"     # matches/commands
 deleted  = "green"         # the status after Ctrl-D
 error    = "red"           # Ctrl-D failed
 match    = { fg = "yellow", bold = true }
-dim      = "dark-gray"     # times, run counts, cuts, the divider
-selected = { bg = "238" }  # the selected row
+dim      = "dark-gray"     # times, numbers of runs, cuts, the divider
+selected = { bg = "238" }  # the selected row, under the match
 ```
 
 A color is a name (`yellow`, `light-blue`, `dark-gray`), `0` to `255` or `#rrggbb`, or a table of
@@ -74,4 +74,5 @@ A color is a name (`yellow`, `light-blue`, `dark-gray`), `0` to `255` or `#rrggb
 
 ## Development
 
-`rake` runs rubocop, `cargo test`, clippy and the Ruby tests, which drive hdf in a pseudo terminal.
+`bundle install`, then `bundle exec rake` runs rubocop, `cargo test`, clippy and the Ruby tests,
+which drive hdf in a pseudo terminal.

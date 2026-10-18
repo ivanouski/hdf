@@ -38,33 +38,8 @@ pub struct Finder {
 
 impl Finder {
     pub fn new(entries: &[Entry], query: String) -> Self {
-        let mut commands: Vec<Command> = Vec::new();
-        let mut positions: HashMap<&str, usize> = HashMap::new();
-
-        // Bash keeps the trailing space of a completed word, so `ls ` and `ls` count as one command
-        for (index, entry) in entries.iter().enumerate().rev() {
-            let text = entry.text.trim_end();
-
-            match positions.get(text) {
-                Some(&position) => {
-                    let command = &mut commands[position];
-                    command.entry_indices.push(index);
-                    command.time = command.time.take().or_else(|| local_time(entry.time?));
-                }
-                None => {
-                    positions.insert(text, commands.len());
-                    commands.push(Command {
-                        text: text.to_string(),
-                        original: entry.original.clone(),
-                        time: entry.time.and_then(local_time),
-                        entry_indices: vec![index],
-                    });
-                }
-            }
-        }
-
         let mut finder = Self {
-            commands,
+            commands: commands(entries),
             cursor: query.len(),
             query,
             matches: Vec::new(),
@@ -223,6 +198,36 @@ impl Finder {
             .collect();
         self.selected = 0;
     }
+}
+
+// One command per distinct text, most recent first, with the entries it ran as. Bash keeps the
+// trailing space of a completed word, so `ls ` and `ls` count as one command.
+fn commands(entries: &[Entry]) -> Vec<Command> {
+    let mut commands: Vec<Command> = Vec::new();
+    let mut positions: HashMap<&str, usize> = HashMap::new();
+
+    for (index, entry) in entries.iter().enumerate().rev() {
+        let text = entry.text.trim_end();
+
+        match positions.get(text) {
+            Some(&position) => {
+                let command = &mut commands[position];
+                command.entry_indices.push(index);
+                command.time = command.time.take().or_else(|| local_time(entry.time?));
+            }
+            None => {
+                positions.insert(text, commands.len());
+                commands.push(Command {
+                    text: text.to_string(),
+                    original: entry.original.clone(),
+                    time: entry.time.and_then(local_time),
+                    entry_indices: vec![index],
+                });
+            }
+        }
+    }
+
+    commands
 }
 
 fn local_time(seconds: i64) -> Option<String> {

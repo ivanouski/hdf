@@ -79,14 +79,27 @@ struct EntryLines {
 // it. When the file starts with a timestamp, an entry also spans every line up to the next timestamp
 // (multi-line commands), otherwise every line is an entry.
 pub fn parse(content: &[u8]) -> Vec<Entry> {
-    let mut lines = Vec::new();
+    group(content, line_ranges(content))
+        .into_iter()
+        .filter_map(|lines| lines.entry(content))
+        .collect()
+}
+
+// Each line of content, with its newline
+fn line_ranges(content: &[u8]) -> Vec<Range<usize>> {
     let mut start = 0;
 
-    for line in content.split_inclusive(|&byte| byte == b'\n') {
-        lines.push(start..start + line.len());
-        start += line.len();
-    }
+    content
+        .split_inclusive(|&byte| byte == b'\n')
+        .map(|line| {
+            let range = start..start + line.len();
+            start = range.end;
+            range
+        })
+        .collect()
+}
 
+fn group(content: &[u8], lines: Vec<Range<usize>>) -> Vec<EntryLines> {
     let multiline = lines
         .first()
         .is_some_and(|line| is_timestamp(&content[line.clone()]));
@@ -110,23 +123,26 @@ pub fn parse(content: &[u8]) -> Vec<Entry> {
     }
 
     entries
-        .into_iter()
-        .filter_map(|EntryLines { timestamp, command }| {
-            let time = timestamp
-                .as_ref()
-                .and_then(|line| seconds(&content[line.clone()]));
-            let original = String::from_utf8_lossy(trim_newline(&content[command.clone()]));
-            let text = printable(&original);
-            let start = timestamp.map_or(command.start, |line| line.start);
+}
 
-            (!text.trim().is_empty()).then(|| Entry {
-                original: original.into_owned(),
-                text,
-                time,
-                bytes: start..command.end,
-            })
+impl EntryLines {
+    // None for a blank command
+    fn entry(self, content: &[u8]) -> Option<Entry> {
+        let time = self
+            .timestamp
+            .as_ref()
+            .and_then(|line| seconds(&content[line.clone()]));
+        let original = String::from_utf8_lossy(trim_newline(&content[self.command.clone()]));
+        let text = printable(&original);
+        let start = self.timestamp.map_or(self.command.start, |line| line.start);
+
+        (!text.trim().is_empty()).then(|| Entry {
+            original: original.into_owned(),
+            text,
+            time,
+            bytes: start..self.command.end,
         })
-        .collect()
+    }
 }
 
 fn is_timestamp(line: &[u8]) -> bool {
