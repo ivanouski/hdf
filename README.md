@@ -66,7 +66,8 @@ Up or Down opens hdf with the typed text as the query. Enter runs the chosen com
 on the prompt line to edit, Esc puts back the edited query. Ctrl-P and Ctrl-N still step through
 the shell's history as usual, see [Bash history](#bash-history).
 
-With bash 4.4 or later hdf shows your prompt in place of `>`.
+With bash 4.4 or later hdf shows your prompt in place of `>`, unless it takes more than 60% of the
+width.
 
 | Key                         | Action                                      |
 | --------------------------- | ------------------------------------------- |

@@ -70,8 +70,8 @@ class HdfListingTest < HdfTestCase
     start(query, columns: 40)
     @session.type(' web')
 
-    @session.wait_for_text("> …#{"#{query} web"[-36..]}")
-    @session.wait_for { @session.cursor == [0, 39] }
+    @session.wait_for { |lines| lines.first == "> …#{"#{query} web"[-32..]}  1/1" }
+    @session.wait_for { @session.cursor == [0, 35] }
   end
 
   def test_shows_the_match_of_a_long_command_and_previews_it

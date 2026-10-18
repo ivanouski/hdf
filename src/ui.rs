@@ -36,8 +36,10 @@ pub fn draw(
     list: &mut ListState,
 ) -> usize {
     let area = frame.area();
-    // The shell prompt when it shows anything, > otherwise
-    let shell_prompt = prompt.filter(|prompt| prompt.width() > 0);
+    // The shell prompt when it shows anything and takes at most 60% of the pane, so the query has
+    // room, > otherwise
+    let shell_prompt = prompt
+        .filter(|prompt| prompt.width() > 0 && prompt.width() * 5 <= usize::from(area.width) * 3);
     let layout = RowLayout::new(finder, shell_prompt.map(Line::width), area.width);
     let preview = preview(finder, &layout, area, theme).unwrap_or_default();
     let [prompt_area, list_area, preview_area] = Layout::vertical([
@@ -73,23 +75,38 @@ fn draw_prompt_line(
     let mut line = shell_prompt
         .cloned()
         .unwrap_or_else(|| Line::from(Span::styled("> ", theme.prompt)));
-    let room = usize::from(area.width).saturating_sub(line.width());
-    let (shown, column) = scroll(&finder.query, finder.cursor, room);
-    let cursor = line.width() + column;
-    line.push_span(Span::raw(shown));
+    let prompt_width = line.width();
+    // The count keeps its place after a space, the query scrolls in what is left
+    let room = usize::from(area.width).saturating_sub(prompt_width + 1 + matches(finder).width());
+    let (query, column) = scroll(&finder.query, finder.cursor, room);
+    let [line_area, count_area] = split(area, prompt_width + query.width().min(room));
+    line.push_span(Span::raw(query));
 
-    // The prompt goes over the count, so a long query stays readable
-    frame.set_cursor_position((area.x + cursor as u16, area.y));
+    frame.set_cursor_position((area.x + (prompt_width + column) as u16, area.y));
+    frame.render_widget(Paragraph::new(line), line_area);
     frame.render_widget(
-        Paragraph::new(count(finder, theme, status)).right_aligned(),
-        area,
+        Paragraph::new(count(finder, theme, status, count_area.width)).right_aligned(),
+        count_area,
     );
-    frame.render_widget(Paragraph::new(line), area);
+}
+
+// The first width columns of the line, and the rest after a space
+fn split(area: Rect, width: usize) -> [Rect; 2] {
+    let width = area.width.min(width as u16);
+    let rest = area.width.saturating_sub(width + 1);
+
+    [
+        Rect { width, ..area },
+        Rect {
+            x: area.right() - rest,
+            width: rest,
+            ..area
+        },
+    ]
 }
 
 // The query as room columns show it, and the column of the cursor in it. A cursor past the room
-// keeps to the last column, the text before it cut from the start with … in its place. The space
-// after keeps the count from showing under a cursor at the end.
+// keeps to the last column, the text before it cut from the start with … in its place.
 fn scroll(query: &str, cursor: usize, room: usize) -> (String, usize) {
     let column = query[..cursor].width();
 
@@ -100,21 +117,36 @@ fn scroll(query: &str, cursor: usize, room: usize) -> (String, usize) {
     let start = suffix_start(&query[..cursor], room.saturating_sub(2));
 
     (
-        format!("{ELLIPSIS}{} ", &query[start..]),
+        format!("{ELLIPSIS}{}", &query[start..]),
         ELLIPSIS.width() + query[start..cursor].width(),
     )
 }
 
-// Matches and commands, or the status in their place
-fn count<'a>(finder: &Finder, theme: &Theme, status: Option<&'a Status>) -> Span<'a> {
-    match status {
-        Some(Status::Deleted(message)) => Span::styled(message, theme.deleted),
-        Some(Status::Failed(message)) => Span::styled(message, theme.error),
-        None => Span::styled(
-            format!("{}/{}", finder.matches.len(), finder.commands.len()),
-            theme.count,
-        ),
+// The text in width columns, its end cut with … in its place when it needs more
+fn cut(text: &str, width: usize) -> String {
+    if text.width() <= width {
+        text.to_string()
+    } else if width == 0 {
+        String::new()
+    } else {
+        format!("{}{ELLIPSIS}", &text[..prefix_end(text, 0, width - 1)])
     }
+}
+
+// Matches and commands, or the status in their place until the next key, cut to width
+fn count(finder: &Finder, theme: &Theme, status: Option<&Status>, width: u16) -> Span<'static> {
+    let matches = matches(finder);
+    let (text, style) = match status {
+        Some(Status::Deleted(message)) => (message.as_str(), theme.deleted),
+        Some(Status::Failed(message)) => (message.as_str(), theme.error),
+        None => (matches.as_str(), theme.count),
+    };
+
+    Span::styled(cut(text, width.into()), style)
+}
+
+fn matches(finder: &Finder) -> String {
+    format!("{}/{}", finder.matches.len(), finder.commands.len())
 }
 
 // What every row starts with
@@ -131,7 +163,7 @@ impl RowLayout {
     fn new(finder: &Finder, prompt_width: Option<usize>, pane_width: u16) -> Self {
         let has_times = finder.commands.iter().any(|command| command.time.is_some());
         let time_width = if has_times { TIME_WIDTH + 2 } else { 0 };
-        let column = command_column(prompt_width, time_width, pane_width);
+        let column = command_column(prompt_width, time_width);
 
         Self {
             has_times,
@@ -153,11 +185,10 @@ impl RowLayout {
 }
 
 // Under a shell prompt the commands start where the query does, the times right before them.
-// Without one, or with one too narrow for the times or wider than 60% of the pane, they keep the
-// indent.
-fn command_column(prompt_width: Option<usize>, time_width: usize, pane_width: u16) -> usize {
+// Without one, or with one too narrow for the times, they keep the indent.
+fn command_column(prompt_width: Option<usize>, time_width: usize) -> usize {
     prompt_width
-        .filter(|&width| width >= time_width && width * 5 <= usize::from(pane_width) * 3)
+        .filter(|&width| width >= time_width)
         .unwrap_or(INDENT + time_width)
 }
 
@@ -529,6 +560,15 @@ mod tests {
     }
 
     fn render_query(query: &str, prompt: Option<&str>, home: bool) -> (Buffer, Position) {
+        render_query_with_status(query, prompt, home, None)
+    }
+
+    fn render_query_with_status(
+        query: &str,
+        prompt: Option<&str>,
+        home: bool,
+        status: Option<&Status>,
+    ) -> (Buffer, Position) {
         let mut finder = Finder::new(&history::parse(b"ls\n"), query.to_string());
         if home {
             finder.home();
@@ -538,7 +578,14 @@ mod tests {
         terminal
             .draw(|frame| {
                 let list = &mut ListState::default();
-                draw(frame, &finder, &Theme::default(), prompt.as_ref(), None, list);
+                draw(
+                    frame,
+                    &finder,
+                    &Theme::default(),
+                    prompt.as_ref(),
+                    status,
+                    list,
+                );
             })
             .unwrap();
         let cursor = terminal.get_cursor_position().unwrap();
@@ -550,15 +597,15 @@ mod tests {
     fn scrolls_a_query_too_long_for_the_line_to_the_cursor() {
         let (buffer, cursor) = render_query("0123456789abcdefghij", None, false);
 
-        assert_eq!(text(&buffer, 0), "> …456789abcdefghij ");
-        assert_eq!(cursor, Position::new(19, 0));
+        assert_eq!(text(&buffer, 0), "> …89abcdefghij  0/1");
+        assert_eq!(cursor, Position::new(15, 0));
     }
 
     #[test]
     fn keeps_the_start_of_a_long_query_while_the_cursor_fits() {
         let (buffer, cursor) = render_query("0123456789abcdefghij", None, true);
 
-        assert_eq!(text(&buffer, 0), "> 0123456789abcdefgh");
+        assert_eq!(text(&buffer, 0), "> 0123456789abcd 0/1");
         assert_eq!(cursor, Position::new(2, 0));
     }
 
@@ -566,16 +613,38 @@ mod tests {
     fn scrolls_a_long_query_after_the_shell_prompt() {
         let (buffer, cursor) = render_query("0123456789abcdefghij", Some("dir$ "), false);
 
-        assert_eq!(text(&buffer, 0), "dir$ …789abcdefghij ");
-        assert_eq!(cursor, Position::new(19, 0));
+        assert_eq!(text(&buffer, 0), "dir$ …bcdefghij  0/1");
+        assert_eq!(cursor, Position::new(15, 0));
     }
 
     #[test]
     fn scrolls_wide_characters_whole() {
         let (buffer, cursor) = render_query("日本語のコマンドを検索する", None, false);
 
-        assert_eq!(text(&buffer, 0), "> …マ ン ド を 検 索 す る  ");
-        assert_eq!(cursor, Position::new(19, 0));
+        assert_eq!(text(&buffer, 0), "> …ド を 検 索 す る   0/1");
+        assert_eq!(cursor, Position::new(15, 0));
+    }
+
+    #[test]
+    fn keeps_the_count_in_its_color_after_a_long_query() {
+        let (buffer, _) = render_query("0123456789abcdefghij", None, false);
+        let theme = Theme::default();
+
+        for x in 3..15 {
+            assert_eq!(buffer[(x, 0)].fg, Color::Reset);
+        }
+        for x in 17..20 {
+            assert_eq!(buffer[(x, 0)].fg, theme.count.fg.unwrap());
+        }
+    }
+
+    #[test]
+    fn cuts_the_status_to_the_room_the_query_leaves() {
+        let status = Status::Deleted("deleted git commit".to_string());
+        let (buffer, cursor) = render_query_with_status("0123456789", None, false, Some(&status));
+
+        assert_eq!(text(&buffer, 0), "> 0123456789 delete…");
+        assert_eq!(cursor, Position::new(12, 0));
     }
 
     #[test]
@@ -614,33 +683,40 @@ mod tests {
 
     #[test]
     fn starts_the_commands_under_the_query_after_a_shell_prompt() {
-        assert_eq!(command_column(Some(30), TIME_WIDTH + 2, 80), 30);
-        assert_eq!(command_column(Some(18), TIME_WIDTH + 2, 80), 18);
+        assert_eq!(command_column(Some(30), TIME_WIDTH + 2), 30);
+        assert_eq!(command_column(Some(18), TIME_WIDTH + 2), 18);
         // Without times the gutter is blank
-        assert_eq!(command_column(Some(13), 0, 40), 13);
+        assert_eq!(command_column(Some(13), 0), 13);
     }
 
     #[test]
     fn keeps_the_indent_without_a_shell_prompt() {
         assert_eq!(
-            command_column(None, TIME_WIDTH + 2, 80),
+            command_column(None, TIME_WIDTH + 2),
             INDENT + TIME_WIDTH + 2
         );
-        assert_eq!(command_column(None, 0, 80), INDENT);
+        assert_eq!(command_column(None, 0), INDENT);
     }
 
     #[test]
     fn keeps_the_indent_for_a_prompt_too_narrow_for_the_times() {
         assert_eq!(
-            command_column(Some(17), TIME_WIDTH + 2, 80),
+            command_column(Some(17), TIME_WIDTH + 2),
             INDENT + TIME_WIDTH + 2
         );
     }
 
     #[test]
-    fn keeps_the_indent_for_a_prompt_wider_than_60_percent_of_the_pane() {
-        assert_eq!(command_column(Some(24), 0, 40), 24);
-        assert_eq!(command_column(Some(25), 0, 40), INDENT);
+    fn shows_the_arrow_for_a_prompt_wider_than_60_percent_of_the_pane() {
+        let finder = finder("ls\n");
+        let theme = Theme::default();
+        let kept = render_with_prompt(&finder, &theme, Some(&format!("{}$ ", "d".repeat(22))), 40);
+        let wide = render_with_prompt(&finder, &theme, Some(&format!("{}$ ", "d".repeat(23))), 40);
+
+        assert!(text(&kept, 0).starts_with(&format!("{}$ ls ", "d".repeat(22))));
+        assert_eq!(first_command_column(&kept), 24);
+        assert!(text(&wide, 0).starts_with("> ls "));
+        assert_eq!(first_command_column(&wide), INDENT);
     }
 
     // Most recent first, a command of 54 columns run twice, matched by ls at its end
