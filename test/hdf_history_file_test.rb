@@ -120,7 +120,7 @@ class HdfHistoryFileTest < HdfTestCase
   end
 
   def test_delete_last_rejects_an_invalid_count
-    %w[0 x 2x -3 +2 --help].each do |count|
+    %w[0 x 2x -3 +2 --print-query].each do |count|
       _, stderr, status = run_hdf('--delete-last', count)
 
       assert_equal 2, status.exitstatus

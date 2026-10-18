@@ -70,6 +70,9 @@ pub fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<Args, Stri
     if args.first().is_some_and(|arg| arg == "--delete-last") {
         return match &args[1..] {
             [] => Ok(Args::DeleteLast(1)),
+            // Asked for as anywhere else, not taken for a count
+            [help] if help == "-h" || help == "--help" => Ok(Args::Help),
+            [version] if version == "-V" || version == "--version" => Ok(Args::Version),
             [count] => parse_count(&count.to_string_lossy()).map(Args::DeleteLast),
             _ => Err(usage_error(DELETE_LAST_ALONE)),
         };
@@ -247,6 +250,16 @@ mod tests {
     }
 
     #[test]
+    fn shows_help_and_version_after_delete_last() {
+        for help in ["-h", "--help"] {
+            assert_eq!(parse(&["--delete-last", help]), Ok(Args::Help));
+        }
+        for version in ["-V", "--version"] {
+            assert_eq!(parse(&["--delete-last", version]), Ok(Args::Version));
+        }
+    }
+
+    #[test]
     fn rejects_delete_last_with_other_arguments() {
         for args in [
             &["--delete-last", "1", "2"][..],
@@ -259,7 +272,7 @@ mod tests {
 
     #[test]
     fn rejects_counts_other_than_positive_numbers() {
-        for count in ["0", "-1", "+1", "1x", "", "--help"] {
+        for count in ["0", "-1", "+1", "1x", "", "--print-query"] {
             let error = parse(&["--delete-last", count]).unwrap_err();
 
             assert!(error.starts_with(&format!("invalid count: {count}\n")));
