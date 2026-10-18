@@ -93,10 +93,25 @@ class HdfTest < Minitest::Test
     assert_equal 11, pane.size - 1
   end
 
+  def test_edits_the_query_at_the_cursor
+    start('sbx rn')
+    @session.press(:left)
+    @session.type('u')
+    @session.wait_for_text('> sbx run')
+
+    assert_equal ['> sbx run', 'sbx run codex', 'sbx run claude (3)'], pane
+    @session.wait_for { @session.cursor == [0, '> sbx ru'.size] }
+
+    @session.press(:home, :delete, :end)
+    @session.type('!')
+
+    @session.wait_for_text('> bx run!')
+  end
+
   def test_ignores_letters_typed_with_alt
     start('clau')
 
-    @session.type("\eb")
+    @session.type("\ex")
     @session.type('d')
     @session.wait_for_text('> claud ')
 

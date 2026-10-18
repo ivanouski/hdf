@@ -56,10 +56,11 @@ fn draw_prompt_line(
     let mut line = shell_prompt
         .cloned()
         .unwrap_or_else(|| Line::from(Span::styled("> ", theme.prompt)));
+    let cursor = line.width() + Span::raw(&finder.query[..finder.cursor]).width();
     line.push_span(Span::raw(&finder.query));
 
     // The prompt goes over the count, so a long query stays readable
-    frame.set_cursor_position((area.x + line.width() as u16, area.y));
+    frame.set_cursor_position((area.x + cursor as u16, area.y));
     frame.render_widget(
         Paragraph::new(count(finder, theme, status)).right_aligned(),
         area,
@@ -159,6 +160,7 @@ mod tests {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use ratatui::buffer::Buffer;
+    use ratatui::layout::Position;
     use ratatui::style::{Color, Modifier};
 
     use super::*;
@@ -258,6 +260,21 @@ mod tests {
             first_command_column(&buffer)
         );
         assert_eq!(first_command_column(&buffer), 2 + TIME_WIDTH + 2);
+    }
+
+    #[test]
+    fn puts_the_cursor_where_it_is_in_the_query() {
+        let mut finder = finder("ls\n");
+        finder.left();
+        let mut terminal = Terminal::new(TestBackend::new(40, 4)).unwrap();
+        terminal
+            .draw(|frame| {
+                let list = &mut ListState::default();
+                draw(frame, &finder, &Theme::default(), None, None, list);
+            })
+            .unwrap();
+
+        assert_eq!(terminal.get_cursor_position().unwrap(), Position::new(3, 0));
     }
 
     #[test]

@@ -30,6 +30,8 @@ pub struct Match {
 pub struct Finder {
     pub commands: Vec<Command>,
     pub query: String,
+    // Bytes into the query, where typing goes in
+    pub cursor: usize,
     pub matches: Vec<Match>,
     pub selected: usize,
 }
@@ -63,6 +65,7 @@ impl Finder {
 
         let mut finder = Self {
             commands,
+            cursor: query.len(),
             query,
             matches: Vec::new(),
             selected: 0,
@@ -71,26 +74,79 @@ impl Finder {
         finder
     }
 
-    // Rebuilds the commands from reloaded entries, keeping the query and the selection
+    // Rebuilds the commands from reloaded entries, keeping the query, its cursor and the selection
     pub fn reload(&mut self, entries: &[Entry]) {
-        let selected = self.selected;
+        let (selected, cursor) = (self.selected, self.cursor);
         *self = Self::new(entries, mem::take(&mut self.query));
+        self.cursor = cursor;
         self.select(selected);
     }
 
     pub fn push(&mut self, char: char) {
-        self.query.push(char);
+        self.query.insert(self.cursor, char);
+        self.cursor += char.len_utf8();
         self.refilter();
     }
 
-    pub fn pop(&mut self) {
-        self.query.pop();
-        self.refilter();
+    pub fn delete_back(&mut self) {
+        if let Some(start) = self.previous_boundary() {
+            self.delete_back_to(start);
+        }
     }
 
-    pub fn clear(&mut self) {
-        self.query.clear();
-        self.refilter();
+    pub fn delete_forward(&mut self) {
+        if self.cursor < self.query.len() {
+            self.query.remove(self.cursor);
+            self.refilter();
+        }
+    }
+
+    // Like Ctrl-U in bash, keeps what is after the cursor
+    pub fn delete_to_start(&mut self) {
+        self.delete_back_to(0);
+    }
+
+    // Letters and digits, like Alt-Backspace in bash
+    pub fn delete_word_back(&mut self) {
+        self.delete_back_to(self.word_start(char::is_alphanumeric));
+    }
+
+    // Everything up to whitespace, like Ctrl-W in bash
+    pub fn delete_big_word_back(&mut self) {
+        self.delete_back_to(self.word_start(|char| !char.is_whitespace()));
+    }
+
+    pub fn left(&mut self) {
+        if let Some(start) = self.previous_boundary() {
+            self.cursor = start;
+        }
+    }
+
+    pub fn right(&mut self) {
+        if let Some(end) = self.next_boundary() {
+            self.cursor = end;
+        }
+    }
+
+    pub fn word_left(&mut self) {
+        self.cursor = self.word_start(char::is_alphanumeric);
+    }
+
+    pub fn word_right(&mut self) {
+        let after = &self.query[self.cursor..];
+        let rest = after
+            .trim_start_matches(|char: char| !char.is_alphanumeric())
+            .trim_start_matches(char::is_alphanumeric);
+
+        self.cursor = self.query.len() - rest.len();
+    }
+
+    pub fn home(&mut self) {
+        self.cursor = 0;
+    }
+
+    pub fn end(&mut self) {
+        self.cursor = self.query.len();
     }
 
     pub fn up(&mut self) {
@@ -105,6 +161,37 @@ impl Finder {
         self.matches
             .get(self.selected)
             .map(|found| &self.commands[found.command_index])
+    }
+
+    fn delete_back_to(&mut self, start: usize) {
+        if start < self.cursor {
+            self.query.drain(start..self.cursor);
+            self.cursor = start;
+            self.refilter();
+        }
+    }
+
+    // Where the word before the cursor starts, skipping the characters between. in_word tells
+    // which characters words are made of.
+    fn word_start(&self, in_word: impl Fn(char) -> bool) -> usize {
+        self.query[..self.cursor]
+            .trim_end_matches(|char| !in_word(char))
+            .trim_end_matches(in_word)
+            .len()
+    }
+
+    // Where the character before the cursor starts
+    fn previous_boundary(&self) -> Option<usize> {
+        let (start, _) = self.query[..self.cursor].char_indices().next_back()?;
+
+        Some(start)
+    }
+
+    // Where the character after the cursor ends
+    fn next_boundary(&self) -> Option<usize> {
+        let char = self.query[self.cursor..].chars().next()?;
+
+        Some(self.cursor + char.len_utf8())
     }
 
     // Moves the selection, staying within the matches
@@ -166,6 +253,116 @@ fn fold(char: char) -> char {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::history;
+
+    // Two commands match p
+    const HISTORY: &[u8] = b"ls\npwd\nps\n";
+
+    fn finder(query: &str) -> Finder {
+        Finder::new(&history::parse(HISTORY), query.to_string())
+    }
+
+    #[test]
+    fn starts_with_the_cursor_after_the_query() {
+        assert_eq!(finder("ls").cursor, 2);
+    }
+
+    #[test]
+    fn types_and_deletes_at_the_cursor() {
+        let mut finder = finder("sbx rn");
+
+        finder.left();
+        finder.push('u');
+        assert_eq!((finder.query.as_str(), finder.cursor), ("sbx run", 6));
+
+        finder.delete_back();
+        assert_eq!((finder.query.as_str(), finder.cursor), ("sbx rn", 5));
+
+        finder.delete_forward();
+        assert_eq!((finder.query.as_str(), finder.cursor), ("sbx r", 5));
+    }
+
+    #[test]
+    fn moves_the_cursor_by_characters_within_the_query() {
+        let mut finder = finder("äö");
+
+        finder.left();
+        assert_eq!(finder.cursor, 2);
+        finder.left();
+        finder.left();
+        assert_eq!(finder.cursor, 0);
+        finder.right();
+        assert_eq!(finder.cursor, 2);
+        finder.end();
+        finder.right();
+        assert_eq!(finder.cursor, 4);
+        finder.home();
+        assert_eq!(finder.cursor, 0);
+    }
+
+    #[test]
+    fn deletes_before_the_cursor_like_bash() {
+        let mut finder = finder("git log");
+
+        (0..3).for_each(|_| finder.left());
+        finder.delete_to_start();
+
+        assert_eq!((finder.query.as_str(), finder.cursor), ("log", 0));
+    }
+
+    #[test]
+    fn deletes_nothing_past_the_ends() {
+        let mut finder = finder("p");
+        finder.down();
+
+        finder.delete_forward();
+        finder.home();
+        finder.delete_back();
+        finder.delete_to_start();
+
+        // The selection stays, as the matches did not change
+        assert_eq!((finder.query.as_str(), finder.selected), ("p", 1));
+    }
+
+    #[test]
+    fn moves_the_cursor_by_words_of_letters_and_digits() {
+        let mut finder = finder("git log --all");
+
+        for cursor in [10, 4, 0, 0] {
+            finder.word_left();
+            assert_eq!(finder.cursor, cursor);
+        }
+
+        for cursor in [3, 7, 13, 13] {
+            finder.word_right();
+            assert_eq!(finder.cursor, cursor);
+        }
+    }
+
+    #[test]
+    fn deletes_words_before_the_cursor() {
+        let mut finder = finder("cd ~/src/utils ");
+
+        finder.delete_word_back();
+        assert_eq!((finder.query.as_str(), finder.cursor), ("cd ~/src/", 9));
+
+        finder.delete_big_word_back();
+        assert_eq!((finder.query.as_str(), finder.cursor), ("cd ", 3));
+
+        finder.home();
+        finder.delete_big_word_back();
+        assert_eq!(finder.query, "cd ");
+    }
+
+    #[test]
+    fn keeps_the_cursor_on_reload() {
+        let mut finder = finder("ls");
+
+        finder.left();
+        finder.reload(&history::parse(HISTORY));
+
+        assert_eq!(finder.cursor, 1);
+    }
 
     #[test]
     fn formats_times_as_wide_as_the_column() {

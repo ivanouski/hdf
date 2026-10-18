@@ -28,7 +28,14 @@ prompt narrower than the times or wider than 60% of the terminal keeps the usual
 | PgUp, PgDn               | move the selection, like Up and Down                       |
 | Enter, Tab               | print the selected command; without matches, quit like Esc |
 | Ctrl-D                   | delete the selected command, every occurrence of it        |
-| Backspace, Ctrl-U        | delete a character, clear the query                        |
+| Left, Right, Home, End   | move the cursor in the query                               |
+| Ctrl-A, Ctrl-E           | move the cursor to the start, the end                      |
+| Alt-B, Alt-F             | move the cursor a word back, forward                       |
+| Alt/Ctrl-Left, -Right    | move the cursor a word back, forward                       |
+| Backspace, Delete        | delete the character before, at the cursor                 |
+| Alt-Backspace            | delete the word before the cursor                          |
+| Ctrl-W                   | delete back to whitespace                                  |
+| Ctrl-U                   | delete the query before the cursor                         |
 | Esc                      | quit                                                       |
 | Ctrl-C                   | quit, leaving the prompt line as it was                    |
 

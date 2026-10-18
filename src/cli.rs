@@ -1,3 +1,5 @@
+use std::ffi::OsString;
+
 use crate::config;
 
 const USAGE: &str = "\
@@ -19,7 +21,14 @@ Keys:
   PgUp, PgDn                move the selection, like Up and Down
   Enter, Tab                print the selected command
   Ctrl-D                    delete the selected command from history
-  Backspace, Ctrl-U         delete a character, clear the query
+  Left, Right, Home, End    move the cursor in the query
+  Ctrl-A, Ctrl-E            move the cursor to the start, the end
+  Alt-B, Alt-F              move the cursor a word back, forward
+  Alt/Ctrl-Left, -Right     move the cursor a word back, forward
+  Backspace, Delete         delete the character before, at the cursor
+  Alt-Backspace             delete the word before the cursor
+  Ctrl-W                    delete back to whitespace
+  Ctrl-U                    delete the query before the cursor
   Esc                       quit, exit with 1
   Ctrl-C                    quit, exit with 130
 
@@ -47,18 +56,18 @@ pub enum Args {
 }
 
 // The arguments without the program name
-pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
+pub fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
     let mut words = Vec::new();
     let mut options = true;
     let mut print_query = false;
     let mut prompt = None;
 
-    let args: Vec<String> = args.into_iter().collect();
+    let args: Vec<OsString> = args.into_iter().collect();
 
     if args.first().is_some_and(|arg| arg == "--delete-last") {
         return match &args[1..] {
             [] => Ok(Args::DeleteLast(1)),
-            [count] => parse_count(count).map(Args::DeleteLast),
+            [count] => parse_count(&count.to_string_lossy()).map(Args::DeleteLast),
             _ => Err(usage_error(DELETE_LAST_ALONE)),
         };
     }
@@ -66,15 +75,21 @@ pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String
     let mut args = args.into_iter();
 
     while let Some(arg) = args.next() {
-        match arg.as_str() {
+        // A query with its invalid bytes replaced would change the line bash gets back
+        let Some(text) = arg.to_str() else {
+            return Err(format!("not valid UTF-8: {}", arg.to_string_lossy()));
+        };
+
+        match text {
             "--" if options => options = false,
             "-h" | "--help" if options => return Ok(Args::Help),
             "-V" | "--version" if options => return Ok(Args::Version),
             "--init-config" if options => return Ok(Args::InitConfig),
             "--print-query" if options => print_query = true,
-            // Taken as is, a prompt may start with a dash
+            // Taken as is, a prompt may start with a dash. It is only shown, so invalid bytes
+            // become replacement characters.
             "--prompt" if options => match args.next() {
-                Some(text) => prompt = Some(text),
+                Some(text) => prompt = Some(text.to_string_lossy().into_owned()),
                 None => return Err(usage_error(PROMPT_TEXT)),
             },
             "--delete-last" if options => {
@@ -83,7 +98,7 @@ pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String
             option if options && option.starts_with('-') && option.len() > 1 => {
                 return Err(usage_error(&format!("invalid option: {option}")));
             }
-            _ => words.push(arg),
+            _ => words.push(text.to_string()),
         }
     }
 
@@ -119,10 +134,16 @@ pub fn help() -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::ffi::OsStringExt;
+
     use super::*;
 
     fn parse(args: &[&str]) -> Result<Args, String> {
-        parse_args(args.iter().map(|arg| arg.to_string()))
+        parse_args(args.iter().map(OsString::from))
+    }
+
+    fn invalid_utf8(text: &[u8]) -> OsString {
+        OsString::from_vec(text.to_vec())
     }
 
     fn search(query: &str, print_query: bool) -> Result<Args, String> {
@@ -156,6 +177,28 @@ mod tests {
                 print_query: true,
                 prompt: Some("-$ ".to_string()),
             })
+        );
+    }
+
+    #[test]
+    fn replaces_invalid_bytes_in_the_prompt() {
+        let args = [OsString::from("--prompt"), invalid_utf8(b"\xff$ ")];
+
+        assert_eq!(
+            parse_args(args),
+            Ok(Args::Search {
+                query: String::new(),
+                print_query: false,
+                prompt: Some("\u{fffd}$ ".to_string()),
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_bytes_in_the_query() {
+        assert_eq!(
+            parse_args([invalid_utf8(b"ls \xff")]),
+            Err("not valid UTF-8: ls \u{fffd}".to_string())
         );
     }
 

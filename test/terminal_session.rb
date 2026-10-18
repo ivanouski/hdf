@@ -39,6 +39,11 @@ class TerminalSession
   KEYS = {
     up: "\e[A",
     down: "\e[B",
+    right: "\e[C",
+    left: "\e[D",
+    home: "\e[H",
+    end: "\e[F",
+    delete: "\e[3~",
     page_up: "\e[5~",
     page_down: "\e[6~",
     enter: "\r",
@@ -57,6 +62,10 @@ class TerminalSession
   # The screen as lines with trailing spaces removed
   def screen
     @mutex.synchronize { @grid.map { |row| row.join.rstrip } }
+  end
+
+  def cursor
+    @mutex.synchronize { [@row, @column] }
   end
 
   # Everything the command wrote, escape sequences included

@@ -67,7 +67,7 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<ExitCode, String> {
-    let (query, print_query, prompt) = match cli::parse_args(env::args().skip(1))? {
+    let (query, print_query, prompt) = match cli::parse_args(env::args_os().skip(1))? {
         Args::Search {
             query,
             print_query,
@@ -229,8 +229,21 @@ fn handle_key(
         (KeyCode::Char('d'), true) => return Continue(delete(finder, history)),
         (KeyCode::Up | KeyCode::PageUp, _) | (KeyCode::Char('p'), true) => finder.up(),
         (KeyCode::Down | KeyCode::PageDown, _) | (KeyCode::Char('n'), true) => finder.down(),
-        (KeyCode::Backspace, _) => finder.pop(),
-        (KeyCode::Char('u'), true) => finder.clear(),
+        // Option-Left and Right on a Mac send Alt-B and F or Alt-Left and Right, Linux terminals
+        // Ctrl-Left and Right
+        (KeyCode::Left, _) if control || alt => finder.word_left(),
+        (KeyCode::Right, _) if control || alt => finder.word_right(),
+        (KeyCode::Char('b'), false) if alt => finder.word_left(),
+        (KeyCode::Char('f'), false) if alt => finder.word_right(),
+        (KeyCode::Left, _) => finder.left(),
+        (KeyCode::Right, _) => finder.right(),
+        (KeyCode::Home, _) | (KeyCode::Char('a'), true) => finder.home(),
+        (KeyCode::End, _) | (KeyCode::Char('e'), true) => finder.end(),
+        (KeyCode::Backspace, _) if alt => finder.delete_word_back(),
+        (KeyCode::Backspace, _) => finder.delete_back(),
+        (KeyCode::Delete, _) => finder.delete_forward(),
+        (KeyCode::Char('u'), true) => finder.delete_to_start(),
+        (KeyCode::Char('w'), true) => finder.delete_big_word_back(),
         // Alt and a letter is a shortcut elsewhere, not text for the query
         (KeyCode::Char(char), false) if !alt => finder.push(char),
         _ => {}
@@ -383,6 +396,63 @@ mod tests {
 
         session.edit(KeyCode::Char('u'), CONTROL);
         assert_eq!(session.finder.query, "");
+    }
+
+    #[test]
+    fn moves_the_cursor_and_edits_at_it() {
+        let mut session = Session::open("cursor");
+
+        for char in "gt lg".chars() {
+            session.edit(KeyCode::Char(char), NONE);
+        }
+
+        for (code, modifiers, query, cursor) in [
+            (KeyCode::Left, NONE, "gt lg", 4),
+            (KeyCode::Char('o'), NONE, "gt log", 5),
+            (KeyCode::Home, NONE, "gt log", 0),
+            (KeyCode::Right, NONE, "gt log", 1),
+            (KeyCode::Char('i'), NONE, "git log", 2),
+            (KeyCode::End, NONE, "git log", 7),
+            (KeyCode::Char('a'), CONTROL, "git log", 0),
+            (KeyCode::Delete, NONE, "it log", 0),
+            (KeyCode::Char('e'), CONTROL, "it log", 6),
+            (KeyCode::Left, NONE, "it log", 5),
+            (KeyCode::Left, NONE, "it log", 4),
+            (KeyCode::Char('u'), CONTROL, "og", 0),
+        ] {
+            session.edit(code, modifiers);
+            assert_eq!(
+                (session.finder.query.as_str(), session.finder.cursor),
+                (query, cursor)
+            );
+        }
+    }
+
+    #[test]
+    fn moves_the_cursor_and_deletes_by_words() {
+        let mut session = Session::open("words");
+        const ALT: KeyModifiers = KeyModifiers::ALT;
+
+        for char in "cd ~/src/utils".chars() {
+            session.edit(KeyCode::Char(char), NONE);
+        }
+
+        for (code, modifiers, query, cursor) in [
+            (KeyCode::Char('b'), ALT, "cd ~/src/utils", 9),
+            (KeyCode::Left, ALT, "cd ~/src/utils", 5),
+            (KeyCode::Left, CONTROL, "cd ~/src/utils", 0),
+            (KeyCode::Char('f'), ALT, "cd ~/src/utils", 2),
+            (KeyCode::Right, ALT, "cd ~/src/utils", 8),
+            (KeyCode::Right, CONTROL, "cd ~/src/utils", 14),
+            (KeyCode::Backspace, ALT, "cd ~/src/", 9),
+            (KeyCode::Char('w'), CONTROL, "cd ", 3),
+        ] {
+            session.edit(code, modifiers);
+            assert_eq!(
+                (session.finder.query.as_str(), session.finder.cursor),
+                (query, cursor)
+            );
+        }
     }
 
     #[test]
