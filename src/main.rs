@@ -3,6 +3,7 @@ mod config;
 mod context;
 mod finder;
 mod history;
+mod prompt;
 #[cfg(test)]
 mod test_util;
 mod tty;
@@ -19,7 +20,8 @@ use std::sync::atomic::Ordering;
 use ratatui::backend::{Backend, ClearType, CrosstermBackend};
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::crossterm::{cursor, terminal};
-use ratatui::layout::{Position, Rect};
+use ratatui::layout::Position;
+use ratatui::text::Line;
 use ratatui::widgets::ListState;
 use ratatui::{Terminal, TerminalOptions, Viewport};
 
@@ -65,8 +67,12 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<ExitCode, String> {
-    let (query, print_query) = match cli::parse_args(env::args().skip(1))? {
-        Args::Search { query, print_query } => (query, print_query),
+    let (query, print_query, prompt) = match cli::parse_args(env::args().skip(1))? {
+        Args::Search {
+            query,
+            print_query,
+            prompt,
+        } => (query, print_query, prompt),
         Args::DeleteLast(count) => {
             delete_last(count)?;
             return Ok(ExitCode::SUCCESS);
@@ -88,8 +94,10 @@ fn run() -> Result<ExitCode, String> {
     let config = Config::load()?;
     let mut history = load_history()?;
     let mut finder = Finder::new(history.entries(), query);
+    let prompt = prompt.map(|text| prompt::parse(&text));
 
-    let outcome = pick(&mut finder, &mut history, &config.colors).context("terminal error")?;
+    let outcome = pick(&mut finder, &mut history, &config.colors, prompt.as_ref())
+        .context("terminal error")?;
 
     match outcome {
         Outcome::Picked(command) => {
@@ -107,61 +115,96 @@ fn run() -> Result<ExitCode, String> {
 }
 
 // Runs the finder in a pane under the cursor's line, returns how it was left
-fn pick(finder: &mut Finder, history: &mut History, theme: &Theme) -> io::Result<Outcome> {
-    // Draw on the terminal itself so the finder works with stdout captured
-    let mut tty = OpenOptions::new().read(true).write(true).open("/dev/tty")?;
-    let _stdout = StdoutToTty::new(&tty)?;
-    let _raw_mode = RawMode::enable()?;
-
-    // Bash clears the prompt line before running a bind -x command, so the pane opens there.
-    // When the cursor is still on some text, it opens on the next line to keep that text.
-    let (column, _) = cursor::position()?;
-
-    if column > 0 {
-        tty.write_all(b"\r\n")?;
-    }
-
-    let height = terminal::size()?.1.min(PANE_HEIGHT);
-    let mut terminal = Terminal::with_options(
-        CrosstermBackend::new(tty),
-        TerminalOptions {
-            viewport: Viewport::Inline(height),
-        },
-    )?;
+fn pick(
+    finder: &mut Finder,
+    history: &mut History,
+    theme: &Theme,
+    prompt: Option<&Line>,
+) -> io::Result<Outcome> {
+    let mut pane = Pane::open()?;
     let mut list = ListState::default();
-    let mut area = Rect::default();
     let mut status = None;
     let signal = tty::watch_signals()?;
 
     let outcome = loop {
-        terminal.draw(|frame| {
-            area = frame.area();
-            ui::draw(frame, finder, theme, status.as_ref(), &mut list);
+        pane.terminal.draw(|frame| {
+            ui::draw(frame, finder, theme, prompt, status.as_ref(), &mut list);
         })?;
 
-        let Some(event) = tty::next_event(&signal)? else {
-            break Outcome::Signaled(signal.load(Ordering::Relaxed));
-        };
-        let Event::Key(key) = event else {
-            continue;
-        };
-
-        if key.kind != KeyEventKind::Press {
-            continue;
-        }
-
-        match handle_key(key, finder, history) {
-            Break(outcome) => break outcome,
-            Continue(next_status) => status = next_status,
+        match tty::next_event(&signal)? {
+            None => break Outcome::Signaled(signal.load(Ordering::Relaxed)),
+            Some(Event::Key(key)) if key.kind == KeyEventKind::Press => {
+                match handle_key(key, finder, history) {
+                    Break(outcome) => break outcome,
+                    Continue(next_status) => status = next_status,
+                }
+            }
+            // Other events, like a resize, only redraw
+            Some(_) => {}
         }
     };
 
-    let cleared = clear_pane(&mut terminal, area, column);
+    let closed = pane.close();
 
     // After SIGHUP the terminal may be gone, the signal still decides the exit status
     match outcome {
         Outcome::Signaled(_) => Ok(outcome),
-        _ => cleared.map(|()| outcome),
+        _ => closed.map(|()| outcome),
+    }
+}
+
+// The finder's pane, drawn on the terminal itself so the finder works with stdout captured
+struct Pane {
+    terminal: Terminal<CrosstermBackend<File>>,
+    // Of the cursor when opened, on text to go back to unless 0
+    column: u16,
+    // Fields drop in order, so these are restored after the terminal is gone
+    _raw_mode: RawMode,
+    _stdout: StdoutToTty,
+}
+
+impl Pane {
+    fn open() -> io::Result<Self> {
+        let mut tty = OpenOptions::new().read(true).write(true).open("/dev/tty")?;
+        let stdout = StdoutToTty::new(&tty)?;
+        let raw_mode = RawMode::enable()?;
+
+        // Bash clears the prompt line before running a bind -x command, so the pane opens there.
+        // When the cursor is still on some text, it opens on the next line to keep that text.
+        let (column, _) = cursor::position()?;
+
+        if column > 0 {
+            tty.write_all(b"\r\n")?;
+        }
+
+        let height = terminal::size()?.1.min(PANE_HEIGHT);
+        let terminal = Terminal::with_options(
+            CrosstermBackend::new(tty),
+            TerminalOptions {
+                viewport: Viewport::Inline(height),
+            },
+        )?;
+
+        Ok(Self {
+            terminal,
+            column,
+            _raw_mode: raw_mode,
+            _stdout: stdout,
+        })
+    }
+
+    // Leaves no trace of the pane and puts the cursor back where it was
+    fn close(mut self) -> io::Result<()> {
+        let area = self.terminal.get_frame().area();
+        let backend = self.terminal.backend_mut();
+        backend.set_cursor_position(area.as_position())?;
+        backend.clear_region(ClearType::AfterCursor)?;
+
+        if self.column > 0 {
+            backend.set_cursor_position(Position::new(self.column, area.y.saturating_sub(1)))?;
+        }
+
+        self.terminal.show_cursor()
     }
 }
 
@@ -194,23 +237,6 @@ fn handle_key(
     }
 
     Continue(None)
-}
-
-// Leaves no trace of the pane and puts the cursor back where it was
-fn clear_pane(
-    terminal: &mut Terminal<CrosstermBackend<File>>,
-    area: Rect,
-    column: u16,
-) -> io::Result<()> {
-    let backend = terminal.backend_mut();
-    backend.set_cursor_position(area.as_position())?;
-    backend.clear_region(ClearType::AfterCursor)?;
-
-    if column > 0 {
-        backend.set_cursor_position(Position::new(column, area.y.saturating_sub(1)))?;
-    }
-
-    terminal.show_cursor()
 }
 
 // Deletes every occurrence of the selected command and reloads the history

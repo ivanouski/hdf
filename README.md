@@ -16,6 +16,10 @@ the way, every occurrence of them.
 Page Up and Page Down then open hdf with the typed text as the query. Enter and Tab put the chosen
 command on the prompt line, Esc puts back the query as edited.
 
+With bash 4.4 or later `.hdfrc` passes the shell prompt, `--prompt "${PS1@P}"`, so hdf shows it in
+place of `>`, in its colors, and lists the commands under the query, the times before them. A
+prompt narrower than the times or wider than 60% of the terminal keeps the usual indent.
+
 ## Keys
 
 | Key                      | Action                                                     |

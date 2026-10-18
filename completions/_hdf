@@ -2,7 +2,7 @@
 
 _hdf() {
   local current="${COMP_WORDS[COMP_CWORD]}"
-  local word index print_query=""
+  local word index print_query="" prompt=""
   local -a candidates=()
 
   for (( index = 1; index < COMP_CWORD; index++ )); do
@@ -14,6 +14,14 @@ _hdf() {
         return 0
         ;;
       --print-query) print_query=1 ;;
+      --prompt)
+        prompt=1
+        # The prompt text is free text, whatever it looks like
+        if (( ++index == COMP_CWORD )); then
+          COMPREPLY=()
+          return 0
+        fi
+        ;;
     esac
   done
 
@@ -21,6 +29,7 @@ _hdf() {
   case "${current}" in
     --*)
       [[ -z "${print_query}" ]] && candidates+=(--print-query)
+      [[ -z "${prompt}" ]] && candidates+=(--prompt)
       (( COMP_CWORD == 1 )) && candidates+=(--delete-last --init-config --help --version)
       ;;
     -*) (( COMP_CWORD == 1 )) && candidates+=(-h -V) ;;

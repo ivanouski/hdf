@@ -645,9 +645,9 @@ class HdfTest < Minitest::Test
 
     @session.type('pick')
     @session.press(:page_up)
-    @session.wait_for_text('> pick')
+    wait_for_hdf_in_bash('pick')
 
-    assert_equal ['> pick', 'echo picked'], pane
+    assert_equal ['$ pick', 'echo picked'], pane
 
     @session.press(:enter)
     @session.wait_for_text('$ echo picked')
@@ -661,7 +661,7 @@ class HdfTest < Minitest::Test
     start_bash
 
     @session.press(:page_up)
-    @session.wait_for_text('> ')
+    wait_for_hdf_in_bash
     @session.press(:tab)
 
     @session.wait_for { |lines| lines.first == '$ echo picked' }
@@ -672,9 +672,33 @@ class HdfTest < Minitest::Test
     start_bash
 
     @session.press(:page_up)
-    @session.wait_for_text('> ')
+    wait_for_hdf_in_bash
 
-    assert_equal ['>', 'ls', 'echo first'], pane
+    assert_equal ['$', 'ls', 'echo first'], pane
+  end
+
+  def test_shows_the_shell_prompt_in_its_colors
+    File.write(@history, "echo first\necho picked\n")
+    start_bash(ps1: '\[\e]0;title\a\e[35m\]box\[\e[0m\]\$ ')
+
+    @session.type('pick')
+    @session.press(:page_up)
+    @session.wait_for { |lines| lines.first.match?(%r{\Abox\$ pick +1/2\z}) }
+
+    assert_color '38;5;5'
+    # hdf draws after asking for the cursor position, bash sets the title before
+    refute_includes @session.output.partition("\e[6n").last, 'title'
+  end
+
+  def test_lists_commands_under_the_query_after_a_long_prompt
+    File.write(@history, "#1700000000\necho first\n#1700000000\necho picked\n")
+    start_bash(ps1: '[mon@Aer ~/src/utils (main)]\$ ')
+
+    @session.type('echo')
+    @session.press(:page_up)
+    @session.wait_for { |lines| lines.first.match?(%r{\A\[mon@Aer ~/src/utils \(main\)\]\$ echo +2/2\z}) }
+
+    assert_equal "#{' ' * 12}2023-11-14 22:13  echo picked", @session.screen[1]
   end
 
   def test_up_and_down_browse_history_as_usual
@@ -696,9 +720,9 @@ class HdfTest < Minitest::Test
 
     @session.type('echo')
     @session.press(:page_down)
-    @session.wait_for_text('> echo')
+    wait_for_hdf_in_bash('echo')
 
-    assert_equal ['> echo', 'echo first'], pane
+    assert_equal ['$ echo', 'echo first'], pane
   end
 
   def test_escape_keeps_the_typed_text
@@ -706,7 +730,7 @@ class HdfTest < Minitest::Test
 
     @session.type('sbx')
     @session.press(:page_up)
-    @session.wait_for_text('> sbx')
+    wait_for_hdf_in_bash('sbx')
     @session.press(:escape)
 
     @session.wait_for { |lines| lines.first == '$ sbx' }
@@ -717,9 +741,9 @@ class HdfTest < Minitest::Test
 
     @session.type('sbx run')
     @session.press(:page_up)
-    @session.wait_for_text('> sbx run')
+    wait_for_hdf_in_bash('sbx run')
     @session.press(:backspace, :backspace, :backspace, :backspace)
-    @session.wait_for { |lines| lines.first.start_with?('> sbx ') && !lines.first.include?('run') }
+    wait_for_hdf_in_bash('sbx')
     @session.press(:escape)
     @session.wait_for { |lines| lines.first == '$ sbx' }
     @session.type('X')
@@ -732,7 +756,7 @@ class HdfTest < Minitest::Test
 
     @session.type("sbx run\e[D\e[D\e[D")
     @session.press(:page_up)
-    @session.wait_for_text('> sbx run')
+    wait_for_hdf_in_bash('sbx run')
     @session.press(:escape)
     @session.wait_for { |lines| lines.first == '$ sbx run' }
     @session.type('X')
@@ -745,9 +769,9 @@ class HdfTest < Minitest::Test
 
     @session.type('sbx run')
     @session.press(:page_up)
-    @session.wait_for_text('> sbx run')
+    wait_for_hdf_in_bash('sbx run')
     @session.press(:backspace, :backspace, :backspace)
-    @session.wait_for { |lines| lines.first.start_with?('> sbx ') && !lines.first.include?('r') }
+    wait_for_hdf_in_bash('sbx')
     @session.press(:escape)
     @session.wait_for { |lines| lines.first == '$ sbx' }
     @session.type('X')
@@ -760,9 +784,9 @@ class HdfTest < Minitest::Test
 
     @session.type('sbx run')
     @session.press(:page_up)
-    @session.wait_for_text('> sbx run')
+    wait_for_hdf_in_bash('sbx run')
     @session.type('zzz')
-    @session.wait_for_text('> sbx runzzz')
+    wait_for_hdf_in_bash('sbx runzzz')
     @session.press(:enter)
 
     @session.wait_for { |lines| lines.first == '$ sbx runzzz' }
@@ -791,7 +815,7 @@ class HdfTest < Minitest::Test
 
     @session.type('sbx run')
     @session.press(:page_up)
-    @session.wait_for_text('> sbx run')
+    wait_for_hdf_in_bash('sbx run')
     @session.press(:backspace, :backspace, :backspace, :backspace)
     @session.wait_for { |lines| !lines.first.include?('run') }
     @session.press(:ctrl_c)
@@ -819,9 +843,9 @@ class HdfTest < Minitest::Test
     @session.type("echo fresh\r")
     @session.wait_for_text('fresh')
     @session.press(:page_up)
-    @session.wait_for_text('> ')
+    wait_for_hdf_in_bash
 
-    assert_equal ['>', 'echo fresh'], pane
+    assert_equal ['$', 'echo fresh'], pane
   end
 
   def test_deleted_commands_leave_the_shell_history_at_the_next_prompt
@@ -829,7 +853,7 @@ class HdfTest < Minitest::Test
     start_bash
 
     @session.press(:page_up)
-    @session.wait_for_text('> ')
+    wait_for_hdf_in_bash
     @session.press(:down)
     delete
     @session.press(:escape)
@@ -847,7 +871,7 @@ class HdfTest < Minitest::Test
     start_bash
 
     @session.press(:page_up)
-    @session.wait_for_text('> ')
+    wait_for_hdf_in_bash
     @session.press(:enter)
     @session.wait_for_text('$ echo second')
     @session.press(:ctrl_u)
@@ -1026,6 +1050,9 @@ class HdfTest < Minitest::Test
     assert_match(/\Ahdf: cannot read .*missing: No such file or directory/, stderr)
   end
 
+  # The prompt line, by the count or status at its end
+  PANE_TOP = %r{ {2,}(\d+/\d+|deleted .*|cannot .*)\z}
+
   private
 
   def start(*query, command: [HDF, *query], history: @history, env: {}, **terminal)
@@ -1040,10 +1067,10 @@ class HdfTest < Minitest::Test
   end
 
   # An interactive bash with the hdf setup, the dotfiles' history reload, and a $ prompt
-  def start_bash(path: HDF_DIR)
+  def start_bash(path: HDF_DIR, ps1: '$ ')
     rc = File.join(@tmp_dir, 'bashrc')
     File.write(rc, <<~BASH)
-      PS1='$ '
+      PS1='#{ps1}'
       HISTFILE=#{@history}
       PROMPT_COMMAND='history -a; history -c; history -r'
       . #{HDFRC}
@@ -1053,7 +1080,13 @@ class HdfTest < Minitest::Test
       'TZ' => 'UTC',
     }
     @session = TerminalSession.new(['bash', '--noprofile', '--rcfile', rc, '-i'], env:)
-    @session.wait_for { |lines| lines.first == '$' }
+    @session.wait_for { |lines| !lines.first.empty? }
+  end
+
+  # Waits for hdf under the prompt of start_bash, showing the query and the match count
+  def wait_for_hdf_in_bash(query = '')
+    @session.wait_for { |lines| lines.any? { |line| line.match?(%r{\A\$ #{Regexp.escape(query)} +\d+/\d+\z}) } }
+    sleep(0.05)
   end
 
   def wait_for_pane
@@ -1064,8 +1097,8 @@ class HdfTest < Minitest::Test
   # Lines of the pane: the prompt without the count or status, then the listed commands
   def pane
     lines = @session.screen
-    top = lines.index { |line| line.start_with?('> ') }
-    prompt = lines[top].sub(%r{ {2,}(\d+/\d+|deleted .*|cannot .*)\z}, '')
+    top = lines.index { |line| line.match?(PANE_TOP) }
+    prompt = lines[top].sub(PANE_TOP, '')
 
     [prompt, *lines[(top + 1)..].take_while { |line| !line.empty? }.map(&:strip)]
   end

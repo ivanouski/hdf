@@ -8,6 +8,7 @@ case-insensitively.
 
 Options:
   --print-query      on Esc, print the query and exit with 3
+  --prompt TEXT      show TEXT, the shell prompt as bash prints it, instead of >
   --delete-last [N]  delete the last N commands from history, 1 by default
   --init-config      write the default config, unless it exists
   -h, --help         print this help
@@ -30,10 +31,15 @@ Errors exit with 2, signals with 128 + the signal.
 ";
 
 const DELETE_LAST_ALONE: &str = "--delete-last takes no other arguments";
+const PROMPT_TEXT: &str = "--prompt takes the prompt text";
 
 #[derive(Debug, PartialEq)]
 pub enum Args {
-    Search { query: String, print_query: bool },
+    Search {
+        query: String,
+        print_query: bool,
+        prompt: Option<String>,
+    },
     DeleteLast(usize),
     InitConfig,
     Help,
@@ -45,6 +51,7 @@ pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String
     let mut words = Vec::new();
     let mut options = true;
     let mut print_query = false;
+    let mut prompt = None;
 
     let args: Vec<String> = args.into_iter().collect();
 
@@ -56,13 +63,20 @@ pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String
         };
     }
 
-    for arg in args {
+    let mut args = args.into_iter();
+
+    while let Some(arg) = args.next() {
         match arg.as_str() {
             "--" if options => options = false,
             "-h" | "--help" if options => return Ok(Args::Help),
             "-V" | "--version" if options => return Ok(Args::Version),
             "--init-config" if options => return Ok(Args::InitConfig),
             "--print-query" if options => print_query = true,
+            // Taken as is, a prompt may start with a dash
+            "--prompt" if options => match args.next() {
+                Some(text) => prompt = Some(text),
+                None => return Err(usage_error(PROMPT_TEXT)),
+            },
             "--delete-last" if options => {
                 return Err(usage_error(DELETE_LAST_ALONE));
             }
@@ -76,6 +90,7 @@ pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String
     Ok(Args::Search {
         query: words.join(" "),
         print_query,
+        prompt,
     })
 }
 
@@ -114,6 +129,7 @@ mod tests {
         Ok(Args::Search {
             query: query.to_string(),
             print_query,
+            prompt: None,
         })
     }
 
@@ -129,6 +145,23 @@ mod tests {
             parse(&["git", "--print-query", "log"]),
             search("git log", true)
         );
+    }
+
+    #[test]
+    fn takes_the_next_argument_for_the_prompt() {
+        assert_eq!(
+            parse(&["--prompt", "-$ ", "--print-query", "--", "git"]),
+            Ok(Args::Search {
+                query: "git".to_string(),
+                print_query: true,
+                prompt: Some("-$ ".to_string()),
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_a_prompt_option_without_the_text() {
+        assert!(parse(&["--prompt"]).unwrap_err().starts_with(PROMPT_TEXT));
     }
 
     #[test]
