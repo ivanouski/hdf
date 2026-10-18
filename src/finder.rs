@@ -157,6 +157,14 @@ impl Finder {
         self.select(self.selected + 1);
     }
 
+    pub fn page_up(&mut self, rows: usize) {
+        self.selected = self.selected.saturating_sub(rows.max(1));
+    }
+
+    pub fn page_down(&mut self, rows: usize) {
+        self.select(self.selected + rows.max(1));
+    }
+
     pub fn selection(&self) -> Option<&Command> {
         self.matches
             .get(self.selected)
@@ -322,6 +330,27 @@ mod tests {
 
         // The selection stays, as the matches did not change
         assert_eq!((finder.query.as_str(), finder.selected), ("p", 1));
+    }
+
+    #[test]
+    fn moves_the_selection_by_pages_and_stops_at_the_ends() {
+        let mut finder = finder("");
+
+        finder.page_down(2);
+        assert_eq!(finder.selected, 2);
+
+        finder.page_down(2);
+        assert_eq!(finder.selected, 2);
+
+        finder.page_up(1);
+        assert_eq!(finder.selected, 1);
+
+        finder.page_up(2);
+        assert_eq!(finder.selected, 0);
+
+        // A pane too short for any rows still moves
+        finder.page_down(0);
+        assert_eq!(finder.selected, 1);
     }
 
     #[test]

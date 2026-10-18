@@ -20,13 +20,24 @@ __hdf_search() {
   line=$(HISTFILE=${HISTFILE} hdf "${options[@]}" -- "${READLINE_LINE}")
   status=$?
 
-  # 0: picked command, 3: query left with Esc; anything else keeps the line
-  if (( status == 0 || status == 3 )) && [[ ${line} != "${READLINE_LINE}" ]]; then
+  # 0: picked command, 3: query left with Esc, 4: command to edit; anything else keeps the line
+  if (( status == 0 || status == 3 || status == 4 )) && [[ ${line} != "${READLINE_LINE}" ]]; then
     READLINE_LINE=${line}
     READLINE_POINT=${#line}
   fi
+
+  # A bind -x function cannot run the line, the key after it in the macro does
+  if (( status == 0 )); then
+    bind '"\e[9101~": accept-line'
+  else
+    bind '"\e[9101~": ""'
+  fi
 }
 
-# Page Up / Page Down search history with hdf.
-bind -x '"\e[5~": __hdf_search'
-bind -x '"\e[6~": __hdf_search'
+# Up / Down search history with hdf, Enter runs the pick. Ctrl-P / Ctrl-N still step through it.
+# The macro's keys are made up, no terminal sends them.
+bind -x '"\e[9100~": __hdf_search'
+bind '"\e[A": "\e[9100~\e[9101~"'
+bind '"\eOA": "\e[9100~\e[9101~"'
+bind '"\e[B": "\e[9100~\e[9101~"'
+bind '"\eOB": "\e[9100~\e[9101~"'

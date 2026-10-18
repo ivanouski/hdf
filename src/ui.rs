@@ -26,6 +26,7 @@ pub enum Status {
     Failed(String),
 }
 
+// Returns the rows of the list, a page for PgUp and PgDn
 pub fn draw(
     frame: &mut Frame,
     finder: &Finder,
@@ -33,7 +34,7 @@ pub fn draw(
     prompt: Option<&Line>,
     status: Option<&Status>,
     list: &mut ListState,
-) {
+) -> usize {
     let area = frame.area();
     // The shell prompt when it shows anything, > otherwise
     let shell_prompt = prompt.filter(|prompt| prompt.width() > 0);
@@ -57,6 +58,8 @@ pub fn draw(
     list.select((!finder.matches.is_empty()).then_some(finder.selected));
     frame.render_stateful_widget(List::new(rows), list_area, list);
     frame.render_widget(Paragraph::new(preview), preview_area);
+
+    usize::from(list_area.height)
 }
 
 fn draw_prompt_line(
@@ -392,16 +395,32 @@ mod tests {
         width: u16,
         height: u16,
     ) -> Buffer {
+        render_paged(finder, theme, prompt, width, height).0
+    }
+
+    // The rendered pane and the rows draw gives for PgUp and PgDn
+    fn render_paged(
+        finder: &Finder,
+        theme: &Theme,
+        prompt: Option<&str>,
+        width: u16,
+        height: u16,
+    ) -> (Buffer, usize) {
         let prompt = prompt.map(prompt::parse);
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        let mut page = 0;
         terminal
             .draw(|frame| {
                 let list = &mut ListState::default();
-                draw(frame, finder, theme, prompt.as_ref(), None, list);
+                page = draw(frame, finder, theme, prompt.as_ref(), None, list);
             })
             .unwrap();
 
-        terminal.backend().buffer().clone()
+        (terminal.backend().buffer().clone(), page)
+    }
+
+    fn page(finder: &Finder, height: u16) -> usize {
+        render_paged(finder, &Theme::default(), None, 40, height).1
     }
 
     fn text(buffer: &Buffer, y: u16) -> String {
@@ -663,5 +682,16 @@ mod tests {
         let buffer = render_sized(&finder(LONG), &Theme::default(), None, 40, 6);
 
         assert!(!(0..6).any(|y| text(&buffer, y).starts_with('─')));
+    }
+
+    #[test]
+    fn gives_the_list_rows_as_the_page_without_the_preview() {
+        let mut finder = finder(LONG);
+
+        // The prompt line, the divider and two lines of preview leave 4 rows
+        assert_eq!(page(&finder, 8), 4);
+
+        finder.down();
+        assert_eq!(page(&finder, 8), 7);
     }
 }

@@ -18,8 +18,9 @@ Options:
 
 Keys:
   Up, Down, Ctrl-P, Ctrl-N  move the selection
-  PgUp, PgDn                move the selection, like Up and Down
-  Enter, Tab                print the selected command
+  PgUp, PgDn                move the selection by a page
+  Enter                     print the selected command
+  Tab                       print the selected command, exit with 4
   Ctrl-D                    delete the selected command from history
   Left, Right, Home, End    move the cursor in the query
   Ctrl-A, Ctrl-E            move the cursor to the start, the end
@@ -31,6 +32,8 @@ Keys:
   Ctrl-U                    delete the query before the cursor
   Esc                       quit, exit with 1
   Ctrl-C                    quit, exit with 130
+
+Without matches, Enter and Tab quit like Esc.
 
 Config: $XDG_CONFIG_HOME/hdf/config.toml, defaults:
 

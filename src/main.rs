@@ -38,8 +38,10 @@ const PANE_HEIGHT: u16 = 12;
 // How the finder was left
 #[derive(Debug, PartialEq)]
 enum Outcome {
-    // Enter or Tab on a command
+    // Enter on a command, to run it
     Picked(String),
+    // Tab on a command, to edit it first
+    Edited(String),
     // Esc, or Enter and Tab without matches
     Quit,
     // Ctrl-C
@@ -48,12 +50,13 @@ enum Outcome {
     Signaled(usize),
 }
 
-// .hdfrc tells these apart: a pick or the query goes on the prompt line, an error or Ctrl-C
-// leaves the line as it was. Printing the query has a status of its own, so .hdfrc does not take
-// a failure of an hdf without --print-query, an older one, for an empty query.
+// .hdfrc tells these apart: a pick runs, an edit or the query goes on the prompt line, an error or
+// Ctrl-C leaves the line as it was. Printing the query has a status of its own, so .hdfrc does not
+// take a failure of an hdf without --print-query, an older one, for an empty query.
 const QUIT_STATUS: u8 = 1;
 const ERROR_STATUS: u8 = 2;
 const QUERY_STATUS: u8 = 3;
+const EDIT_STATUS: u8 = 4;
 const ABORT_STATUS: u8 = 130;
 
 fn main() -> ExitCode {
@@ -104,6 +107,10 @@ fn run() -> Result<ExitCode, String> {
             print_line(&command)?;
             Ok(ExitCode::SUCCESS)
         }
+        Outcome::Edited(command) => {
+            print_line(&command)?;
+            Ok(ExitCode::from(EDIT_STATUS))
+        }
         Outcome::Quit if print_query => {
             print_line(&finder.query)?;
             Ok(ExitCode::from(QUERY_STATUS))
@@ -124,17 +131,18 @@ fn pick(
     let mut pane = Pane::open()?;
     let mut list = ListState::default();
     let mut status = None;
+    let mut page = 1;
     let signal = tty::watch_signals()?;
 
     let outcome = loop {
         pane.terminal.draw(|frame| {
-            ui::draw(frame, finder, theme, prompt, status.as_ref(), &mut list);
+            page = ui::draw(frame, finder, theme, prompt, status.as_ref(), &mut list);
         })?;
 
         match tty::next_event(&signal)? {
             None => break Outcome::Signaled(signal.load(Ordering::Relaxed)),
             Some(Event::Key(key)) if key.kind == KeyEventKind::Press => {
-                match handle_key(key, finder, history) {
+                match handle_key(key, finder, history, page) {
                     Break(outcome) => break outcome,
                     Continue(next_status) => status = next_status,
                 }
@@ -208,11 +216,13 @@ impl Pane {
     }
 }
 
-// Leaves the finder with an outcome, or stays with the status to show until the next key
+// Leaves the finder with an outcome, or stays with the status to show until the next key. PgUp and
+// PgDn move the selection by the page, the rows of the list.
 fn handle_key(
     key: KeyEvent,
     finder: &mut Finder,
     history: &mut History,
+    page: usize,
 ) -> ControlFlow<Outcome, Option<Status>> {
     let control = key.modifiers.contains(KeyModifiers::CONTROL);
     let alt = key.modifiers.contains(KeyModifiers::ALT);
@@ -221,14 +231,21 @@ fn handle_key(
         (KeyCode::Esc, _) => return Break(Outcome::Quit),
         (KeyCode::Char('c'), true) => return Break(Outcome::Abort),
         (KeyCode::Enter | KeyCode::Tab, _) => {
+            let pick = match key.code {
+                KeyCode::Enter => Outcome::Picked,
+                _ => Outcome::Edited,
+            };
+
             return Break(match finder.selection() {
-                Some(command) => Outcome::Picked(command.original.clone()),
+                Some(command) => pick(command.original.clone()),
                 None => Outcome::Quit,
             });
         }
         (KeyCode::Char('d'), true) => return Continue(delete(finder, history)),
-        (KeyCode::Up | KeyCode::PageUp, _) | (KeyCode::Char('p'), true) => finder.up(),
-        (KeyCode::Down | KeyCode::PageDown, _) | (KeyCode::Char('n'), true) => finder.down(),
+        (KeyCode::Up, _) | (KeyCode::Char('p'), true) => finder.up(),
+        (KeyCode::Down, _) | (KeyCode::Char('n'), true) => finder.down(),
+        (KeyCode::PageUp, _) => finder.page_up(page),
+        (KeyCode::PageDown, _) => finder.page_down(page),
         // Option-Left and Right on a Mac send Alt-B and F or Alt-Left and Right, Linux terminals
         // Ctrl-Left and Right
         (KeyCode::Left, _) if control || alt => finder.word_left(),
@@ -322,6 +339,8 @@ mod tests {
 
     // The finder lists the commands most recent first: echo, pwd, ls
     const HISTORY: &str = "ls\npwd\necho\n";
+    // Rows of the list, for PgUp and PgDn
+    const PAGE: usize = 2;
 
     const NONE: KeyModifiers = KeyModifiers::NONE;
     const CONTROL: KeyModifiers = KeyModifiers::CONTROL;
@@ -355,6 +374,7 @@ mod tests {
                 KeyEvent::new(code, modifiers),
                 &mut self.finder,
                 &mut self.history,
+                PAGE,
             )
         }
 
@@ -365,7 +385,7 @@ mod tests {
     }
 
     #[test]
-    fn moves_the_selection_with_arrows_page_keys_and_ctrl_p_n() {
+    fn moves_the_selection_with_arrows_and_ctrl_p_n() {
         let mut session = Session::open("move");
 
         for (code, modifiers, selected) in [
@@ -375,10 +395,23 @@ mod tests {
             (KeyCode::Down, NONE, 2),
             (KeyCode::Up, NONE, 1),
             (KeyCode::Char('p'), CONTROL, 0),
-            (KeyCode::PageDown, NONE, 1),
-            (KeyCode::PageUp, NONE, 0),
         ] {
             session.edit(code, modifiers);
+            assert_eq!(session.finder.selected, selected);
+        }
+    }
+
+    #[test]
+    fn moves_the_selection_by_a_page_with_page_keys() {
+        let mut session = Session::open("page");
+
+        for (code, selected) in [
+            (KeyCode::PageDown, 2),
+            (KeyCode::PageDown, 2),
+            (KeyCode::Up, 1),
+            (KeyCode::PageUp, 0),
+        ] {
+            session.edit(code, NONE);
             assert_eq!(session.finder.selected, selected);
         }
     }
@@ -466,7 +499,7 @@ mod tests {
     }
 
     #[test]
-    fn picks_the_selection_with_enter_and_tab() {
+    fn picks_the_selection_with_enter_to_run_and_tab_to_edit() {
         let mut session = Session::open("pick");
 
         assert_eq!(
@@ -478,16 +511,17 @@ mod tests {
 
         assert_eq!(
             session.press(KeyCode::Tab, NONE),
-            Break(Outcome::Picked("pwd".to_string()))
+            Break(Outcome::Edited("pwd".to_string()))
         );
     }
 
     #[test]
-    fn quits_on_enter_without_matches() {
+    fn quits_on_enter_and_tab_without_matches() {
         let mut session = Session::open("no-matches");
         session.edit(KeyCode::Char('z'), NONE);
 
         assert_eq!(session.press(KeyCode::Enter, NONE), Break(Outcome::Quit));
+        assert_eq!(session.press(KeyCode::Tab, NONE), Break(Outcome::Quit));
     }
 
     #[test]

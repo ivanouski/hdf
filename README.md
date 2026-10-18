@@ -28,15 +28,18 @@ Without bash-completion, source `completions/_hdf` in `~/.bashrc` instead.
 
 ## Usage
 
-Page Up or Page Down opens hdf with the typed text as the query. Enter puts the chosen command on
-the prompt line, Esc puts back the edited query.
+Up or Down opens hdf with the typed text as the query. Enter runs the chosen command, Tab puts it
+on the prompt line to edit, Esc puts back the edited query. Ctrl-P and Ctrl-N still step through
+history as usual.
 
 With bash 4.4 or later hdf shows your prompt in place of `>`.
 
 | Key                         | Action                                      |
 | --------------------------- | ------------------------------------------- |
-| Up, Down, PgUp, PgDn        | move the selection (also Ctrl-P, Ctrl-N)    |
-| Enter, Tab                  | pick the selected command                   |
+| Up, Down                    | move the selection (also Ctrl-P, Ctrl-N)    |
+| PgUp, PgDn                  | move the selection by a page                |
+| Enter                       | run the selected command                    |
+| Tab                         | put the selected command on the line        |
 | Ctrl-D                      | delete the selected command from history    |
 | Left, Right, Home, End      | move the cursor (also Ctrl-A, Ctrl-E)       |
 | Alt-B, Alt-F, Ctrl-Arrows   | move the cursor by word                     |
