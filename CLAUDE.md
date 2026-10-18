@@ -1,0 +1,1 @@
+- Bump the version in `Cargo.toml` with every change: the code, `home/.hdfrc` or the tests. Patch for fixes, minor for new features or changed behavior (exit statuses, keys, options) while below 1.0. Build afterwards so `Cargo.lock` picks up the new version.

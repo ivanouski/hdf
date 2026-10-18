@@ -4,7 +4,7 @@ require_relative 'test_helper'
 require_relative 'terminal_session'
 
 class HdfTest < Minitest::Test
-  CRATE = File.join(ROOT, 'hdf')
+  CRATE = ROOT
   HDF_DIR = File.join(CRATE, 'target', 'debug')
   HDF = File.join(HDF_DIR, 'hdf')
   HDFRC = File.join(ROOT, 'home', '.hdfrc')

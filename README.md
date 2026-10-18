@@ -1,67 +1,59 @@
 # hdf
 
-Searches bash history and prints the chosen command. Commands can be deleted from the history on
-the way, every occurrence of them.
+A fuzzy finder for bash history. Pick a command to put it on the prompt line, or delete it from
+the history, every occurrence of it.
 
-## Setup
+## Install
 
-`install.rb` at the root of the repo installs hdf with `cargo install --path hdf`, into
-`~/.cargo/bin`, stows `.hdfrc` to `~/.hdfrc` and the bash completion of its options to
-`~/.completions/_hdf`. Load it in `.bashrc`:
+Build and install the binary into `~/.cargo/bin`:
+
+```bash
+cargo install --path .
+```
+
+Load the key bindings in `~/.bashrc`. Copy `home/.hdfrc` anywhere and source it:
 
 ```bash
 [[ -f ~/.hdfrc ]] && . ~/.hdfrc
 ```
 
-Page Up and Page Down then open hdf with the typed text as the query. Enter and Tab put the chosen
-command on the prompt line, Esc puts back the query as edited.
+Optionally, install the bash completion of the options. With bash-completion it loads on demand
+from:
 
-With bash 4.4 or later `.hdfrc` passes the shell prompt, `--prompt "${PS1@P}"`, so hdf shows it in
-place of `>`, in its colors, and lists the commands under the query, the times before them. A
-prompt narrower than the times or wider than 60% of the terminal keeps the usual indent.
+```bash
+cp completions/_hdf ~/.local/share/bash-completion/completions/hdf
+```
 
-A command too long for its row is cut with `…`, keeping the match in view. When the selected one
-is cut, the pane shows it in full under the list, up to three lines.
+Without bash-completion, source `completions/_hdf` in `~/.bashrc` instead.
 
-## Keys
+## Usage
 
-| Key                      | Action                                                     |
-| ------------------------ | ---------------------------------------------------------- |
-| Up, Down, Ctrl-P, Ctrl-N | move the selection                                         |
-| PgUp, PgDn               | move the selection, like Up and Down                       |
-| Enter, Tab               | print the selected command; without matches, quit like Esc |
-| Ctrl-D                   | delete the selected command, every occurrence of it        |
-| Left, Right, Home, End   | move the cursor in the query                               |
-| Ctrl-A, Ctrl-E           | move the cursor to the start, the end                      |
-| Alt-B, Alt-F             | move the cursor a word back, forward                       |
-| Alt/Ctrl-Left, -Right    | move the cursor a word back, forward                       |
-| Backspace, Delete        | delete the character before, at the cursor                 |
-| Alt-Backspace            | delete the word before the cursor                          |
-| Ctrl-W                   | delete back to whitespace                                  |
-| Ctrl-U                   | delete the query before the cursor                         |
-| Esc                      | quit                                                       |
-| Ctrl-C                   | quit, leaving the prompt line as it was                    |
+Page Up or Page Down opens hdf with the typed text as the query. Enter puts the chosen command on
+the prompt line, Esc puts back the edited query.
 
-## Deleting the last commands
+With bash 4.4 or later hdf shows your prompt in place of `>`.
 
-`hdf --delete-last` deletes the last command from the history file, `hdf --delete-last 10` the last
-10. It prints the deleted commands.
+| Key                         | Action                                      |
+| --------------------------- | ------------------------------------------- |
+| Up, Down, PgUp, PgDn        | move the selection (also Ctrl-P, Ctrl-N)    |
+| Enter, Tab                  | pick the selected command                   |
+| Ctrl-D                      | delete the selected command from history    |
+| Left, Right, Home, End      | move the cursor (also Ctrl-A, Ctrl-E)       |
+| Alt-B, Alt-F, Ctrl-Arrows   | move the cursor by word                     |
+| Backspace, Delete           | delete a character                          |
+| Alt-Backspace, Ctrl-W       | delete a word                               |
+| Ctrl-U                      | delete to the start of the query            |
+| Esc                         | quit, keeping the query                     |
+| Ctrl-C                      | quit, leaving the prompt line as it was     |
 
-`hdf --help` lists the options and exit statuses.
+`hdf --delete-last [N]` deletes the last N commands from history, 1 by default, and prints them.
+
+`hdf --help` lists all options and exit statuses.
 
 ## Config
 
-hdf reads `$XDG_CONFIG_HOME/hdf/config.toml`, or `~/.config/hdf/config.toml`. For now it holds the
-colors. Every key is optional, the ones left out keep their defaults.
-
-`hdf --init-config` writes the defaults below to that file and prints its path. It leaves a
-config that is already there alone.
-
-Each key is a color for the text, or a table of `fg`, `bg`, `bold`, `italic`, `underlined` and
-`reversed`. Colors are names like `yellow`, `light-blue` and `dark-gray`, `0` to `255`, or
-`#rrggbb`.
-
-The defaults:
+`hdf --init-config` writes the defaults to `~/.config/hdf/config.toml` (or under
+`$XDG_CONFIG_HOME`). Keys left out keep their defaults:
 
 ```toml
 [colors]
@@ -70,17 +62,13 @@ count    = "dark-gray"     # matches/commands
 deleted  = "green"         # the status after Ctrl-D
 error    = "red"           # Ctrl-D failed
 match    = { fg = "yellow", bold = true }
-dim      = "dark-gray"     # times, numbers of runs, cuts, the divider
-selected = { bg = "238" }  # the selected row, under the match
+dim      = "dark-gray"     # times, run counts, cuts, the divider
+selected = { bg = "238" }  # the selected row
 ```
 
-An example for a light terminal theme, with a light selection and a darker match:
+A color is a name (`yellow`, `light-blue`, `dark-gray`), `0` to `255` or `#rrggbb`, or a table of
+`fg`, `bg`, `bold`, `italic`, `underlined` and `reversed`.
 
-```toml
-[colors]
-selected = { fg = "black", bg = "254" }
-match    = { fg = "#b35900", bold = true }
-```
+## Development
 
-A broken config, an unknown color or key, makes hdf exit with 2 and name the file, line and
-column.
+`rake` runs rubocop, `cargo test`, clippy and the Ruby tests, which drive hdf in a pseudo terminal.

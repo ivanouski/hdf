@@ -1,0 +1,30 @@
+AllCops:
+  TargetRubyVersion: 4.0
+  NewCops: enable
+  SuggestExtensions: false
+  Exclude:
+    - target/**/*
+
+Style/TrailingCommaInArrayLiteral:
+  EnforcedStyleForMultiline: consistent_comma
+
+Style/TrailingCommaInHashLiteral:
+  EnforcedStyleForMultiline: consistent_comma
+
+Style/TrailingCommaInArguments:
+  EnforcedStyleForMultiline: comma
+
+Layout/HashAlignment:
+  EnforcedHashRocketStyle: [key, table]
+
+Naming/RescuedExceptionsVariableName:
+  PreferredName: error
+
+Style/Documentation:
+  Enabled: false
+
+Style/OneClassPerFile:
+  Enabled: false
+
+Metrics:
+  Enabled: false
