@@ -23,6 +23,15 @@ class HdfArgumentsTest < HdfTestCase
     end
   end
 
+  def test_help_and_version_fail_on_a_closed_stdout
+    %w[--help --version].each do |option|
+      stderr, status = run_hdf_into_a_closed_pipe(option)
+
+      assert_equal 2, status.exitstatus
+      assert_equal "hdf: cannot print: Broken pipe (os error 32)\n", stderr
+    end
+  end
+
   def test_searches_for_version_options_after_double_dash
     File.write(@history, "sbx -V\nls\n")
     start('--', '-V')

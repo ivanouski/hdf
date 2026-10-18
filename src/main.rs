@@ -75,15 +75,15 @@ fn run() -> Result<ExitCode, String> {
             return Ok(ExitCode::SUCCESS);
         }
         Args::InitConfig => {
-            println!("{}", Config::init()?.display());
+            print_line(&Config::init()?.display().to_string())?;
             return Ok(ExitCode::SUCCESS);
         }
         Args::Help => {
-            print!("{}", cli::help());
+            print(&cli::help())?;
             return Ok(ExitCode::SUCCESS);
         }
         Args::Version => {
-            println!("hdf {}", env!("CARGO_PKG_VERSION"));
+            print_line(&format!("hdf {}", env!("CARGO_PKG_VERSION")))?;
             return Ok(ExitCode::SUCCESS);
         }
     };
@@ -266,7 +266,11 @@ fn history_path() -> Result<PathBuf, String> {
 }
 
 fn print_line(text: &str) -> Result<(), String> {
-    writeln!(io::stdout(), "{text}").context("cannot print")
+    print(&format!("{text}\n"))
+}
+
+fn print(text: &str) -> Result<(), String> {
+    write!(io::stdout(), "{text}").context("cannot print")
 }
 
 #[cfg(test)]

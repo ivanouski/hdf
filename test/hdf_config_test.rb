@@ -105,6 +105,14 @@ class HdfConfigTest < HdfTestCase
     refute File.exist?(path)
   end
 
+  def test_init_config_fails_on_a_closed_stdout
+    stderr, status = run_hdf_into_a_closed_pipe('--init-config')
+
+    assert_equal 2, status.exitstatus
+    assert_equal "hdf: cannot print: Broken pipe (os error 32)\n", stderr
+    assert File.exist?(File.join(config_home, 'hdf', 'config.toml'))
+  end
+
   def test_starts_with_the_written_config
     run_hdf('--init-config')
     start('cd')

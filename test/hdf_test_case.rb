@@ -131,6 +131,20 @@ class HdfTestCase < Minitest::Test
     Open3.capture3({ 'HISTFILE' => @history, 'XDG_CONFIG_HOME' => config_home }.merge(env), HDF, *)
   end
 
+  # Runs hdf with stdout on a pipe nobody reads, so every write fails with EPIPE
+  def run_hdf_into_a_closed_pipe(*)
+    out_reader, out_writer = IO.pipe
+    out_reader.close
+    err_reader, err_writer = IO.pipe
+    pid = Process.spawn({ 'HISTFILE' => @history, 'XDG_CONFIG_HOME' => config_home }, HDF, *,
+                        out: out_writer, err: err_writer)
+    [out_writer, err_writer].each(&:close)
+    stderr = err_reader.read
+    err_reader.close
+
+    [stderr, Process.wait2(pid).last]
+  end
+
   def assert_color(code)
     assert_match(color_pattern(code), @session.output)
   end
