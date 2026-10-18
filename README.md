@@ -26,11 +26,45 @@ cp completions/_hdf ~/.local/share/bash-completion/completions/hdf
 
 Without bash-completion, source `completions/_hdf` in `~/.bashrc` instead.
 
+## Bash history
+
+hdf reads and edits the history file, `$HISTFILE`. Searching and picking work with bash's defaults.
+
+Deleting needs two settings in `~/.bashrc`:
+
+```bash
+# Save each command at the prompt and reload the file
+PROMPT_COMMAND="history -a; history -c; history -r${PROMPT_COMMAND:+; $PROMPT_COMMAND}"
+# Keep hdf --delete-last out of the history, add a pattern for an alias of it too
+HISTIGNORE="${HISTIGNORE:+$HISTIGNORE:}hdf --delete-last*"
+```
+
+Bash writes commands to the file only on exit. Up and Down save them before opening hdf, but
+`hdf --delete-last` runs on its own: without `history -a` at each prompt the file lacks your latest
+commands, and it deletes older ones instead. Once the file is saved at each prompt, the
+`hdf --delete-last` line itself lands there too, and the next run would delete it, so leave it out
+with `HISTIGNORE`.
+
+Ctrl-D changes only the file too. The shell keeps its own copy, which Ctrl-P, Ctrl-N, `!!` and
+`history` use, and reloading it at each prompt drops the deleted commands from it.
+
+Optionally, for the rest of hdf:
+
+```bash
+# Append to the file on exit instead of overwriting what other shells saved
+shopt -s histappend
+# Save when each command ran, hdf shows it. Commands saved before have no time
+HISTTIMEFORMAT='%F %T '
+# Keep more than the 500 commands bash keeps by default
+HISTSIZE=10000
+HISTFILESIZE=10000
+```
+
 ## Usage
 
 Up or Down opens hdf with the typed text as the query. Enter runs the chosen command, Tab puts it
 on the prompt line to edit, Esc puts back the edited query. Ctrl-P and Ctrl-N still step through
-history as usual.
+the shell's history as usual, see [Bash history](#bash-history).
 
 With bash 4.4 or later hdf shows your prompt in place of `>`.
 
@@ -50,6 +84,7 @@ With bash 4.4 or later hdf shows your prompt in place of `>`.
 | Ctrl-C                      | quit, leaving the prompt line as it was     |
 
 `hdf --delete-last [N]` deletes the last N commands from history, 1 by default, and prints them.
+It needs the history saved at each prompt, see [Bash history](#bash-history).
 
 `hdf --help` lists all options and exit statuses.
 
