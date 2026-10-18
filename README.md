@@ -20,6 +20,9 @@ With bash 4.4 or later `.hdfrc` passes the shell prompt, `--prompt "${PS1@P}"`, 
 place of `>`, in its colors, and lists the commands under the query, the times before them. A
 prompt narrower than the times or wider than 60% of the terminal keeps the usual indent.
 
+A command too long for its row is cut with `…`, keeping the match in view. When the selected one
+is cut, the pane shows it in full under the list, up to three lines.
+
 ## Keys
 
 | Key                      | Action                                                     |
@@ -67,7 +70,7 @@ count    = "dark-gray"     # matches/commands
 deleted  = "green"         # the status after Ctrl-D
 error    = "red"           # Ctrl-D failed
 match    = { fg = "yellow", bold = true }
-dim      = "dark-gray"     # times and numbers of runs
+dim      = "dark-gray"     # times, numbers of runs, cuts, the divider
 selected = { bg = "238" }  # the selected row, under the match
 ```
 

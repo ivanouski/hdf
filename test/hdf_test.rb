@@ -108,6 +108,19 @@ class HdfTest < Minitest::Test
     @session.wait_for_text('> bx run!')
   end
 
+  def test_shows_the_match_of_a_long_command_and_previews_it
+    command = 'kubectl apply -f k8s/prod/ --context=prod-eu-west-1 --server-side ' \
+              '--force-conflicts && ./deploy.sh notify'
+    File.write(@history, "#{command}\nls\n")
+    start('deploy')
+
+    assert_equal "  …#{command[-77..]}", @session.screen[1]
+
+    divider = @session.screen.index('─' * 80)
+
+    assert_equal command, @session.screen[(divider + 1)..].take_while { |line| !line.empty? }.join(' ')
+  end
+
   def test_ignores_letters_typed_with_alt
     start('clau')
 

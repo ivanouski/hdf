@@ -5,12 +5,19 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{List, ListItem, ListState, Paragraph};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::config::Theme;
-use crate::finder::{Finder, Match, TIME_WIDTH};
+use crate::finder::{Command, Finder, Match, TIME_WIDTH};
 
 // Before the commands, or their times, when they do not line up under the query
 const INDENT: usize = 2;
+// In place of the text cut from a command
+const ELLIPSIS: &str = "…";
+// Most lines of the preview, the last one ending in … when the command needs more
+const PREVIEW_LINES: usize = 3;
+// Kept for the list when the preview takes rows from it
+const MIN_LIST_ROWS: usize = 3;
 
 // The outcome of the last Ctrl-D, shown in place of the count until the next key
 #[derive(Debug, PartialEq)]
@@ -27,14 +34,20 @@ pub fn draw(
     status: Option<&Status>,
     list: &mut ListState,
 ) {
-    let [prompt_area, list_area] =
-        Layout::vertical([Constraint::Length(1), Constraint::Fill(1)]).areas(frame.area());
+    let area = frame.area();
     // The shell prompt when it shows anything, > otherwise
     let shell_prompt = prompt.filter(|prompt| prompt.width() > 0);
+    let layout = RowLayout::new(finder, shell_prompt.map(Line::width), area.width);
+    let preview = preview(finder, &layout, area, theme).unwrap_or_default();
+    let [prompt_area, list_area, preview_area] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Fill(1),
+        Constraint::Length(preview.len() as u16),
+    ])
+    .areas(area);
 
     draw_prompt_line(frame, prompt_area, shell_prompt, finder, theme, status);
 
-    let layout = RowLayout::new(finder, shell_prompt.map(Line::width), list_area.width);
     let rows = finder
         .matches
         .iter()
@@ -43,6 +56,7 @@ pub fn draw(
 
     list.select((!finder.matches.is_empty()).then_some(finder.selected));
     frame.render_stateful_widget(List::new(rows), list_area, list);
+    frame.render_widget(Paragraph::new(preview), preview_area);
 }
 
 fn draw_prompt_line(
@@ -86,6 +100,8 @@ struct RowLayout {
     has_times: bool,
     // Before the time, or before the command without times
     indent: String,
+    // Left for the command and its number of runs
+    command_width: usize,
 }
 
 impl RowLayout {
@@ -97,7 +113,19 @@ impl RowLayout {
         Self {
             has_times,
             indent: " ".repeat(column - time_width),
+            command_width: usize::from(pane_width).saturating_sub(column),
         }
+    }
+
+    // The part of a command its row shows, next to its number of runs
+    fn fit(&self, command: &Command, range: &Range<usize>) -> Fitted {
+        let runs_width = runs(command).map_or(0, |runs| runs.width());
+
+        fit(
+            &command.text,
+            range,
+            self.command_width.saturating_sub(runs_width),
+        )
     }
 }
 
@@ -121,6 +149,7 @@ fn row<'a>(
     // The selected row has a style of its own across its width, the match drawn over it. Its
     // time and number of runs are not dimmed, dim colors are hard to read on its background.
     let dim = if selected { Style::new() } else { theme.dim };
+    let fitted = layout.fit(command, &found.range);
     let mut spans = vec![Span::raw(layout.indent.as_str())];
 
     if layout.has_times {
@@ -128,12 +157,23 @@ fn row<'a>(
         spans.push(Span::styled(format!("{time:<TIME_WIDTH$}  "), dim));
     }
 
-    spans.extend(highlight(&command.text, &found.range, theme.matched));
+    if fitted.cut_start {
+        spans.push(Span::styled(ELLIPSIS, dim));
+    }
 
-    let runs = command.entry_indices.len();
+    spans.extend(highlight(
+        &command.text,
+        &found.range,
+        fitted.shown,
+        theme.matched,
+    ));
 
-    if runs > 1 {
-        spans.push(Span::styled(format!(" ({runs})"), dim));
+    if fitted.cut_end {
+        spans.push(Span::styled(ELLIPSIS, dim));
+    }
+
+    if let Some(runs) = runs(command) {
+        spans.push(Span::styled(runs, dim));
     }
 
     // The item style goes on the row first and the spans patch it, while a highlight style
@@ -147,12 +187,174 @@ fn row<'a>(
     }
 }
 
-fn highlight<'a>(text: &'a str, range: &Range<usize>, matched: Style) -> [Span<'a>; 3] {
+// After a command run more than once
+fn runs(command: &Command) -> Option<String> {
+    let runs = command.entry_indices.len();
+
+    (runs > 1).then(|| format!(" ({runs})"))
+}
+
+// The selected command in full under the list, after a divider, when its row is cut and the pane
+// has room for it
+fn preview<'a>(
+    finder: &'a Finder,
+    layout: &RowLayout,
+    area: Rect,
+    theme: &Theme,
+) -> Option<Vec<Line<'a>>> {
+    let found = finder.matches.get(finder.selected)?;
+    let command = &finder.commands[found.command_index];
+
+    if !layout.fit(command, &found.range).is_cut() {
+        return None;
+    }
+
+    let width = usize::from(area.width);
+    let mut lines = wrap(&command.text, width);
+    let cut = lines.len() > PREVIEW_LINES;
+    lines.truncate(PREVIEW_LINES);
+
+    if usize::from(area.height) < 1 + MIN_LIST_ROWS + 1 + lines.len() {
+        return None;
+    }
+
+    if cut && let Some(last) = lines.last_mut() {
+        last.end = prefix_end(&command.text, last.start, width.saturating_sub(1));
+    }
+
+    let divider = Line::styled("─".repeat(width), theme.dim);
+    let mut preview: Vec<Line> = lines
+        .into_iter()
+        .map(|shown| Line::from_iter(highlight(&command.text, &found.range, shown, theme.matched)))
+        .collect();
+
+    if cut && let Some(last) = preview.last_mut() {
+        last.push_span(Span::styled(ELLIPSIS, theme.dim));
+    }
+
+    preview.insert(0, divider);
+    Some(preview)
+}
+
+// The shown part of text, with what it holds of the match highlighted
+fn highlight<'a>(
+    text: &'a str,
+    range: &Range<usize>,
+    shown: Range<usize>,
+    matched: Style,
+) -> [Span<'a>; 3] {
+    let clamp = |index: usize| index.clamp(shown.start, shown.end);
+    let (start, end) = (clamp(range.start), clamp(range.end));
+
     [
-        Span::raw(&text[..range.start]),
-        Span::styled(&text[range.clone()], matched),
-        Span::raw(&text[range.end..]),
+        Span::raw(&text[shown.start..start]),
+        Span::styled(&text[start..end], matched),
+        Span::raw(&text[end..shown.end]),
     ]
+}
+
+// The part of a command shown in a row, and whether an ellipsis goes before or after it
+#[derive(Debug, PartialEq)]
+struct Fitted {
+    shown: Range<usize>,
+    cut_start: bool,
+    cut_end: bool,
+}
+
+impl Fitted {
+    fn is_cut(&self) -> bool {
+        self.cut_start || self.cut_end
+    }
+}
+
+// Fits text into width columns, ellipses included, keeping the match in view: the start of the
+// text when the match is in it, else the end of the text when the match is in that, else the
+// match a third of the way in
+fn fit(text: &str, range: &Range<usize>, width: usize) -> Fitted {
+    let fitted = |shown, cut_start, cut_end| Fitted {
+        shown,
+        cut_start,
+        cut_end,
+    };
+
+    if text.width() <= width {
+        return fitted(0..text.len(), false, false);
+    }
+
+    let room = width.saturating_sub(1);
+
+    if text[..range.end].width() <= room {
+        return fitted(0..prefix_end(text, 0, room), false, true);
+    }
+
+    let end_start = suffix_start(text, room);
+
+    if end_start <= range.start {
+        return fitted(end_start..text.len(), true, false);
+    }
+
+    let room = width.saturating_sub(2);
+    let start = suffix_start(&text[..range.start], room / 3);
+
+    fitted(start..prefix_end(text, start, room), true, true)
+}
+
+// Byte ranges of the lines text wraps into at width columns, broken after spaces where possible.
+// A space at the end of a full line stays on it, past the width.
+fn wrap(text: &str, width: usize) -> Vec<Range<usize>> {
+    let mut lines = Vec::new();
+    let mut start = 0;
+
+    while start < text.len() {
+        let end = prefix_end(text, start, width);
+        let end = if end == text.len() {
+            end
+        } else if text[end..].starts_with(' ') {
+            end + 1
+        } else if let Some(space) = text[start..end].rfind(' ') {
+            start + space + 1
+        } else if end == start {
+            // A character wider than the line
+            start + text[start..].chars().next().map_or(1, char::len_utf8)
+        } else {
+            end
+        };
+
+        lines.push(start..end);
+        start = end;
+    }
+
+    lines
+}
+
+// Where text from start ends when it may take width columns
+fn prefix_end(text: &str, start: usize, width: usize) -> usize {
+    let mut used = 0;
+
+    for (index, char) in text[start..].char_indices() {
+        used += char.width().unwrap_or(0);
+
+        if used > width {
+            return start + index;
+        }
+    }
+
+    text.len()
+}
+
+// Where the end of text starts when it may take width columns
+fn suffix_start(text: &str, width: usize) -> usize {
+    let mut used = 0;
+
+    for (index, char) in text.char_indices().rev() {
+        used += char.width().unwrap_or(0);
+
+        if used > width {
+            return index + char.len_utf8();
+        }
+    }
+
+    0
 }
 
 #[cfg(test)]
@@ -180,8 +382,18 @@ mod tests {
         prompt: Option<&str>,
         width: u16,
     ) -> Buffer {
+        render_sized(finder, theme, prompt, width, 4)
+    }
+
+    fn render_sized(
+        finder: &Finder,
+        theme: &Theme,
+        prompt: Option<&str>,
+        width: u16,
+        height: u16,
+    ) -> Buffer {
         let prompt = prompt.map(prompt::parse);
-        let mut terminal = Terminal::new(TestBackend::new(width, 4)).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         terminal
             .draw(|frame| {
                 let list = &mut ListState::default();
@@ -340,5 +552,116 @@ mod tests {
     fn keeps_the_indent_for_a_prompt_wider_than_60_percent_of_the_pane() {
         assert_eq!(command_column(Some(24), 0, 40), 24);
         assert_eq!(command_column(Some(25), 0, 40), INDENT);
+    }
+
+    // Most recent first, a command of 54 columns run twice, matched by ls at its end
+    const LONG: &str = "ls -la\n\
+        echo one two three four five six seven eight nine; ls\n\
+        echo one two three four five six seven eight nine; ls\n";
+
+    fn shown(text: &str, fitted: &Fitted) -> String {
+        let start = if fitted.cut_start { ELLIPSIS } else { "" };
+        let end = if fitted.cut_end { ELLIPSIS } else { "" };
+
+        format!("{start}{}{end}", &text[fitted.shown.clone()])
+    }
+
+    #[test]
+    fn fits_text_that_fits_as_it_is() {
+        let fitted = fit("0123456789", &(3..4), 10);
+
+        assert_eq!(shown("0123456789", &fitted), "0123456789");
+        assert!(!fitted.is_cut());
+    }
+
+    #[test]
+    fn cuts_the_end_when_the_match_is_early() {
+        assert_eq!(
+            shown("0123456789", &fit("0123456789", &(1..2), 6)),
+            "01234…"
+        );
+    }
+
+    #[test]
+    fn shows_the_end_when_the_match_is_in_it() {
+        assert_eq!(
+            shown("0123456789", &fit("0123456789", &(8..9), 6)),
+            "…56789"
+        );
+    }
+
+    #[test]
+    fn puts_a_match_in_the_middle_a_third_of_the_way_in() {
+        let text = "0123456789abcdefghij";
+
+        assert_eq!(shown(text, &fit(text, &(10..11), 8)), "…89abcd…");
+    }
+
+    #[test]
+    fn fits_wide_characters_without_splitting_them() {
+        let text = "日本語のテキスト";
+
+        for width in 3..16 {
+            for range in [0..3, 12..15, 21..24] {
+                let fitted = fit(text, &range, width);
+
+                assert!(shown(text, &fitted).width() <= width, "{width} {range:?}");
+                assert!(fitted.shown.start <= range.start, "{width} {range:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn wraps_after_spaces() {
+        assert_eq!(wrap("aa bb cc", 5), [0..6, 6..8]);
+        assert_eq!(wrap("aa bbb cc", 5), [0..3, 3..7, 7..9]);
+    }
+
+    #[test]
+    fn wraps_words_longer_than_the_line_where_they_fill_it() {
+        assert_eq!(wrap("abcdefgh", 3), [0..3, 3..6, 6..8]);
+        assert_eq!(wrap("日本", 1), [0..3, 3..6]);
+    }
+
+    #[test]
+    fn shows_the_match_of_a_long_row_with_the_number_of_runs() {
+        let buffer = render_sized(&finder(LONG), &Theme::default(), None, 40, 4);
+        let row = text(&buffer, 1);
+
+        assert_eq!(row, "  …our five six seven eight nine; ls (2)");
+        assert_eq!(
+            buffer[(row.find("ls").unwrap() as u16 - 2, 1)].fg,
+            Color::Yellow
+        );
+        assert!((0..40).all(|x| buffer[(x, 1)].bg == Color::Indexed(238)));
+    }
+
+    #[test]
+    fn previews_the_selected_command_when_its_row_is_cut() {
+        let buffer = render_sized(&finder(LONG), &Theme::default(), None, 40, 8);
+
+        assert_eq!(text(&buffer, 5), "─".repeat(40));
+        assert_eq!(
+            text(&buffer, 6).trim_end(),
+            "echo one two three four five six seven"
+        );
+        assert_eq!(text(&buffer, 7).trim_end(), "eight nine; ls");
+        assert_eq!(buffer[(12, 7)].fg, Color::Yellow);
+    }
+
+    #[test]
+    fn previews_nothing_for_a_row_that_fits() {
+        let mut finder = finder(LONG);
+        finder.down();
+        let buffer = render_sized(&finder, &Theme::default(), None, 40, 8);
+
+        assert!(!(0..8).any(|y| text(&buffer, y).starts_with('─')));
+    }
+
+    #[test]
+    fn previews_nothing_without_room_for_the_list() {
+        let buffer = render_sized(&finder(LONG), &Theme::default(), None, 40, 6);
+
+        assert!(!(0..6).any(|y| text(&buffer, y).starts_with('─')));
     }
 }

@@ -19,7 +19,7 @@ count    = "dark-gray"     # matches/commands
 deleted  = "green"         # the status after Ctrl-D
 error    = "red"           # Ctrl-D failed
 match    = { fg = "yellow", bold = true }
-dim      = "dark-gray"     # times and numbers of runs
+dim      = "dark-gray"     # times, numbers of runs, cuts, the divider
 selected = { bg = "238" }  # the selected row, under the match
 "#;
 
@@ -45,7 +45,8 @@ pub struct Theme {
     pub error: Style,
     #[serde(rename = "match", deserialize_with = "style")]
     pub matched: Style,
-    // The time column and the number of runs, on rows other than the selected one
+    // The time column, the number of runs and the ellipses of cut commands, on rows other than
+    // the selected one, and the divider over the preview
     #[serde(deserialize_with = "style")]
     pub dim: Style,
     // The whole selected row, with the match drawn over it
