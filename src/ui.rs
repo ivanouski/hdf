@@ -1,3 +1,5 @@
+//! Drawing the finder: the prompt line, the list and the preview
+
 use std::ops::Range;
 
 use ratatui::Frame;
@@ -10,24 +12,24 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use crate::config::Theme;
 use crate::finder::{Command, Finder, Match, TIME_WIDTH};
 
-// Before the commands, or their times, when they do not line up under the query
+/// Before the commands, or their times, when they do not line up under the query
 const INDENT: usize = 2;
-// In place of the text cut from a command
+/// In place of the text cut from a command
 const ELLIPSIS: &str = "…";
-// Most lines of the preview, the last one ending in … when the command needs more
+/// Most lines of the preview, the last one ending in … when the command needs more
 const PREVIEW_LINES: usize = 3;
-// Kept for the list when the preview takes rows from it
+/// Kept for the list when the preview takes rows from it
 const MIN_LIST_ROWS: usize = 3;
 
-// The outcome of the last Ctrl-D, shown in place of the count until the next key
+/// The outcome of the last Ctrl-D, shown in place of the count until the next key
 #[derive(Debug, PartialEq)]
 pub enum Status {
     Deleted(String),
     Failed(String),
 }
 
-// Returns the rows of the list, a page for PgUp and PgDn. The offset is the first match in view,
-// kept from one draw to the next.
+/// Returns the rows of the list, a page for PgUp and PgDn. The offset is the first match in view,
+/// kept from one draw to the next.
 pub fn draw(
     frame: &mut Frame,
     finder: &Finder,
@@ -71,8 +73,8 @@ pub fn draw(
     height
 }
 
-// The first match in view: the one before, moved just enough to keep the selected match in view.
-// A list without rows starts at the selected match.
+/// The first match in view: the one before, moved just enough to keep the selected match in view.
+/// A list without rows starts at the selected match.
 fn list_offset(offset: usize, finder: &Finder, height: usize) -> usize {
     let offset = offset.min(finder.matches.len().saturating_sub(1));
 
@@ -85,8 +87,8 @@ fn list_offset(offset: usize, finder: &Finder, height: usize) -> usize {
     }
 }
 
-// The shell prompt when it shows anything and takes at most 60% of the pane, so the query has
-// room, None for > in its place
+/// The shell prompt when it shows anything and takes at most 60% of the pane, so the query has
+/// room, None for > in its place
 pub fn shell_prompt<'a>(prompt: Option<&'a Line<'a>>, width: u16) -> Option<&'a Line<'a>> {
     prompt.filter(|prompt| prompt.width() > 0 && prompt.width() * 5 <= usize::from(width) * 3)
 }
@@ -117,7 +119,7 @@ fn draw_prompt_line(
     );
 }
 
-// The first width columns of the line, and the rest after a space
+/// The first width columns of the line, and the rest after a space
 fn split(area: Rect, width: usize) -> [Rect; 2] {
     let width = area.width.min(width as u16);
     let rest = area.width.saturating_sub(width + 1);
@@ -132,8 +134,8 @@ fn split(area: Rect, width: usize) -> [Rect; 2] {
     ]
 }
 
-// The query as room columns show it, and the column of the cursor in it. A cursor past the room
-// keeps to the last column, the text before it cut from the start with … in its place.
+/// The query as room columns show it, and the column of the cursor in it. A cursor past the room
+/// keeps to the last column, the text before it cut from the start with … in its place.
 fn scroll(query: &str, cursor: usize, room: usize) -> (String, usize) {
     let column = query[..cursor].width();
 
@@ -149,7 +151,7 @@ fn scroll(query: &str, cursor: usize, room: usize) -> (String, usize) {
     )
 }
 
-// The text in width columns, its end cut with … in its place when it needs more
+/// The text in width columns, its end cut with … in its place when it needs more
 fn cut(text: &str, width: usize) -> String {
     if text.width() <= width {
         text.to_string()
@@ -160,7 +162,7 @@ fn cut(text: &str, width: usize) -> String {
     }
 }
 
-// Matches and commands, or the status in their place until the next key, cut to width
+/// Matches and commands, or the status in their place until the next key, cut to width
 fn count(finder: &Finder, theme: &Theme, status: Option<&Status>, width: u16) -> Span<'static> {
     let matches = matches(finder);
     let (text, style) = match status {
@@ -176,11 +178,11 @@ fn matches(finder: &Finder) -> String {
     format!("{}/{}", finder.matches.len(), finder.commands.len())
 }
 
-// What every row starts with
+/// What every row starts with
 struct RowLayout {
-    // Before the time, or before the command without times
+    /// Before the time, or before the command without times
     indent: String,
-    // Left for the command and its number of runs
+    /// Left for the command and its number of runs
     command_width: usize,
 }
 
@@ -195,7 +197,7 @@ impl RowLayout {
         }
     }
 
-    // The part of a command its row shows, next to its number of runs
+    /// The part of a command its row shows, next to its number of runs
     fn fit(&self, command: &Command, range: &Range<usize>) -> Fitted {
         let runs_width = runs(command).map_or(0, |runs| runs.width());
 
@@ -207,8 +209,8 @@ impl RowLayout {
     }
 }
 
-// Under a shell prompt the commands start where the query does, the times right before them.
-// Without one, or with one too narrow for the times, they keep the indent.
+/// Under a shell prompt the commands start where the query does, the times right before them.
+/// Without one, or with one too narrow for the times, they keep the indent.
 fn command_column(prompt_width: Option<usize>, time_width: usize) -> usize {
     prompt_width
         .filter(|&width| width >= time_width)
@@ -264,15 +266,15 @@ fn row<'a>(
     }
 }
 
-// After a command run more than once
+/// After a command run more than once
 fn runs(command: &Command) -> Option<String> {
     let runs = command.entry_indices.len();
 
     (runs > 1).then(|| format!(" ({runs})"))
 }
 
-// The selected command in full under the list, after a divider, when its row is cut and the pane
-// has room for it
+/// The selected command in full under the list, after a divider, when its row is cut and the pane
+/// has room for it
 fn preview<'a>(
     finder: &'a Finder,
     layout: &RowLayout,
@@ -313,7 +315,7 @@ fn preview<'a>(
     Some(preview)
 }
 
-// The shown part of text, with what it holds of the match highlighted
+/// The shown part of text, with what it holds of the match highlighted
 fn highlight<'a>(
     text: &'a str,
     range: &Range<usize>,
@@ -330,7 +332,7 @@ fn highlight<'a>(
     ]
 }
 
-// The part of a command shown in a row, and whether an ellipsis goes before or after it
+/// The part of a command shown in a row, and whether an ellipsis goes before or after it
 #[derive(Debug, PartialEq)]
 struct Fitted {
     shown: Range<usize>,
@@ -344,9 +346,9 @@ impl Fitted {
     }
 }
 
-// Fits text into width columns, ellipses included, keeping the match in view: the start of the
-// text when the match is in it, else the end of the text when the match is in that, else the
-// match a third of the way in
+/// Fits text into width columns, ellipses included, keeping the match in view: the start of the
+/// text when the match is in it, else the end of the text when the match is in that, else the
+/// match a third of the way in
 fn fit(text: &str, range: &Range<usize>, width: usize) -> Fitted {
     let fitted = |shown, cut_start, cut_end| Fitted {
         shown,
@@ -376,8 +378,8 @@ fn fit(text: &str, range: &Range<usize>, width: usize) -> Fitted {
     fitted(start..prefix_end(text, start, room), true, true)
 }
 
-// Byte ranges of the lines text wraps into at width columns, broken after spaces where possible.
-// A space at the end of a full line stays on it, past the width.
+/// Byte ranges of the lines text wraps into at width columns, broken after spaces where possible.
+/// A space at the end of a full line stays on it, past the width.
 fn wrap(text: &str, width: usize) -> Vec<Range<usize>> {
     let mut lines = Vec::new();
     let mut start = 0;
@@ -404,12 +406,12 @@ fn wrap(text: &str, width: usize) -> Vec<Range<usize>> {
     lines
 }
 
-// Where text from start ends when it may take width columns
+/// Where text from start ends when it may take width columns
 fn prefix_end(text: &str, start: usize, width: usize) -> usize {
     let mut used = 0;
 
-    for (index, char) in text[start..].char_indices() {
-        used += char.width().unwrap_or(0);
+    for (index, c) in text[start..].char_indices() {
+        used += c.width().unwrap_or(0);
 
         if used > width {
             return start + index;
@@ -419,15 +421,15 @@ fn prefix_end(text: &str, start: usize, width: usize) -> usize {
     text.len()
 }
 
-// Where the end of text starts when it may take width columns
+/// Where the end of text starts when it may take width columns
 fn suffix_start(text: &str, width: usize) -> usize {
     let mut used = 0;
 
-    for (index, char) in text.char_indices().rev() {
-        used += char.width().unwrap_or(0);
+    for (index, c) in text.char_indices().rev() {
+        used += c.width().unwrap_or(0);
 
         if used > width {
-            return index + char.len_utf8();
+            return index + c.len_utf8();
         }
     }
 
@@ -472,7 +474,7 @@ mod tests {
         render_paged(finder, theme, prompt, width, height).0
     }
 
-    // The rendered pane and the rows draw gives for PgUp and PgDn
+    /// The rendered pane and the rows draw gives for PgUp and PgDn
     fn render_paged(
         finder: &Finder,
         theme: &Theme,
@@ -492,7 +494,7 @@ mod tests {
         (terminal.backend().buffer().clone(), page)
     }
 
-    // The commands on the rows of the list, with the offset kept from the draws before
+    /// The commands on the rows of the list, with the offset kept from the draws before
     fn listed(finder: &Finder, height: u16, offset: &mut usize) -> Vec<String> {
         let mut terminal = Terminal::new(TestBackend::new(40, height)).unwrap();
         terminal
@@ -517,12 +519,12 @@ mod tests {
             .collect()
     }
 
-    // The column of the first command, on the selected row
+    /// The column of the first command, on the selected row
     fn first_command_column(buffer: &Buffer) -> usize {
         text(buffer, 1).find("ls").unwrap()
     }
 
-    // The match is at 20 and 21, after the indent, the time and two spaces
+    /// The match is at 20 and 21, after the indent, the time and two spaces
     const HISTORY: &str = "#1700000000\nls -la\n#1700000000\nls\n";
 
     #[test]
@@ -788,7 +790,7 @@ mod tests {
         assert_eq!(first_command_column(&wide), INDENT);
     }
 
-    // Most recent first, a command of 54 columns run twice, matched by ls at its end
+    /// Most recent first, a command of 54 columns run twice, matched by ls at its end
     const LONG: &str = "ls -la\n\
         echo one two three four five six seven eight nine; ls\n\
         echo one two three four five six seven eight nine; ls\n";

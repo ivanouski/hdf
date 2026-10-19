@@ -1,3 +1,5 @@
+//! The part of the terminal under the prompt line that the finder draws in
+
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter, Write};
 
@@ -11,15 +13,15 @@ use crate::tty::{RawMode, StdoutToTty};
 
 const PANE_HEIGHT: u16 = 12;
 
-// Holds a whole frame, so it reaches the terminal at once rather than cell by cell
+/// Holds a whole frame, so it reaches the terminal at once rather than cell by cell
 const FRAME_BUFFER: usize = 1 << 16;
 
-// The finder's pane, drawn on the terminal itself so the finder works with stdout captured
+/// The finder's pane, drawn on the terminal itself so the finder works with stdout captured
 pub struct Pane {
     terminal: Terminal<CrosstermBackend<BufWriter<File>>>,
-    // Of the cursor when opened, on text to go back to unless 0
+    /// Of the cursor when opened, on text to go back to unless 0
     column: u16,
-    // Fields drop in order, so these are restored after the terminal is gone
+    /// Fields drop in order, so these are restored after the terminal is gone
     _raw_mode: RawMode,
     _stdout: StdoutToTty,
 }
@@ -54,8 +56,8 @@ impl Pane {
         })
     }
 
-    // Terminals that support synchronized updates show the frame only once all of it arrived. The
-    // update is ended even when drawing fails, or the terminal keeps waiting for it.
+    /// Terminals that support synchronized updates show the frame only once all of it arrived. The
+    /// update is ended even when drawing fails, or the terminal keeps waiting for it.
     pub fn draw(&mut self, render: impl FnOnce(&mut Frame)) -> io::Result<()> {
         queue!(self.terminal.backend_mut(), BeginSynchronizedUpdate)?;
         let drawn = self.terminal.draw(render).map(|_| ());
@@ -67,9 +69,9 @@ impl Pane {
         self.terminal.get_frame().area().width
     }
 
-    // Clears the pane but the shell prompt, the first kept columns of its first row, and puts the
-    // cursor back where it was. Bash draws the same prompt there after hdf, so the line doesn't
-    // flash empty in between. It takes the rest of the line for empty, so the query goes.
+    /// Clears the pane but the shell prompt, the first kept columns of its first row, and puts the
+    /// cursor back where it was. Bash draws the same prompt there after hdf, so the line doesn't
+    /// flash empty in between. It takes the rest of the line for empty, so the query goes.
     pub fn close(mut self, kept: usize) -> io::Result<()> {
         let area = self.terminal.get_frame().area();
         // Opened under some text, the cursor goes back to it and the pane has no prompt to keep

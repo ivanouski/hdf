@@ -1,3 +1,5 @@
+//! The command line arguments and the help text
+
 use std::ffi::OsString;
 
 use crate::config;
@@ -58,7 +60,7 @@ pub enum Args {
     Version,
 }
 
-// The arguments without the program name
+/// The arguments without the program name
 pub fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
     let mut words = Vec::new();
     let mut options = true;
@@ -115,20 +117,21 @@ pub fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<Args, Stri
     })
 }
 
-// Digits only, so a sign or an option in its place is rejected
+/// Digits only, so a sign or an option in its place is rejected
 fn parse_count(count: &str) -> Result<usize, String> {
-    Some(count)
-        .filter(|count| !count.is_empty() && count.bytes().all(|byte| byte.is_ascii_digit()))
-        .and_then(|count| count.parse().ok())
-        .filter(|&count| count > 0)
-        .ok_or_else(|| usage_error(&format!("invalid count: {count}")))
+    let digits = !count.is_empty() && count.bytes().all(|byte| byte.is_ascii_digit());
+
+    match count.parse() {
+        Ok(number) if digits && number > 0 => Ok(number),
+        _ => Err(usage_error(&format!("invalid count: {count}"))),
+    }
 }
 
 fn usage_error(message: &str) -> String {
     format!("{message}\nTry 'hdf --help' for usage.")
 }
 
-// The usage with the default config, indented
+/// The usage with the default config, indented
 pub fn help() -> String {
     let defaults: String = config::DEFAULT
         .lines()

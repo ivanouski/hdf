@@ -1,3 +1,5 @@
+//! The distinct commands, the query and its matches, apart from drawing them
+
 use std::collections::HashMap;
 use std::mem;
 use std::ops::Range;
@@ -7,32 +9,32 @@ use chrono::{DateTime, Local};
 use crate::history::Entry;
 
 const TIME_FORMAT: &str = "%Y-%m-%d %H:%M";
-// The width of every time, years have four digits
+/// The width of every time, years have four digits
 pub const TIME_WIDTH: usize = "2023-11-14 22:13".len();
 
-// A distinct command and every history entry holding it, most recent first
+/// A distinct command and every history entry holding it, most recent first
 pub struct Command {
-    // As shown in the finder, without trailing whitespace
+    /// As shown in the finder, without trailing whitespace
     pub text: String,
-    // As stored in the most recent entry, for putting on the prompt line
+    /// As stored in the most recent entry, for putting on the prompt line
     pub original: String,
-    // Local time of the most recent entry with a timestamp
+    /// Local time of the most recent entry with a timestamp
     pub time: Option<String>,
     pub entry_indices: Vec<usize>,
 }
 
 pub struct Match {
     pub command_index: usize,
-    // Bytes of the command matched by the query, for highlighting
+    /// Bytes of the command matched by the query, for highlighting
     pub range: Range<usize>,
 }
 
 pub struct Finder {
     pub commands: Vec<Command>,
-    // Whether any command has a time, so the finder shows a column for them
+    /// Whether any command has a time, so the finder shows a column for them
     pub has_times: bool,
     pub query: String,
-    // Bytes into the query, where typing goes in
+    /// Bytes into the query, where typing goes in
     pub cursor: usize,
     pub matches: Vec<Match>,
     pub selected: usize,
@@ -53,7 +55,7 @@ impl Finder {
         finder
     }
 
-    // Rebuilds the commands from reloaded entries, keeping the query, its cursor and the selection
+    /// Rebuilds the commands from reloaded entries, keeping the query, its cursor and the selection
     pub fn reload(&mut self, entries: &[Entry]) {
         let (selected, cursor) = (self.selected, self.cursor);
         *self = Self::new(entries, mem::take(&mut self.query));
@@ -61,9 +63,9 @@ impl Finder {
         self.select(selected);
     }
 
-    pub fn push(&mut self, char: char) {
-        self.query.insert(self.cursor, char);
-        self.cursor += char.len_utf8();
+    pub fn push(&mut self, c: char) {
+        self.query.insert(self.cursor, c);
+        self.cursor += c.len_utf8();
         self.refilter();
     }
 
@@ -80,19 +82,19 @@ impl Finder {
         }
     }
 
-    // Like Ctrl-U in bash, keeps what is after the cursor
+    /// Like Ctrl-U in bash, keeps what is after the cursor
     pub fn delete_to_start(&mut self) {
         self.delete_back_to(0);
     }
 
-    // Letters and digits, like Alt-Backspace in bash
+    /// Letters and digits, like Alt-Backspace in bash
     pub fn delete_word_back(&mut self) {
         self.delete_back_to(self.word_start(char::is_alphanumeric));
     }
 
-    // Everything up to whitespace, like Ctrl-W in bash
+    /// Everything up to whitespace, like Ctrl-W in bash
     pub fn delete_big_word_back(&mut self) {
-        self.delete_back_to(self.word_start(|char| !char.is_whitespace()));
+        self.delete_back_to(self.word_start(|c| !c.is_whitespace()));
     }
 
     pub fn left(&mut self) {
@@ -114,7 +116,7 @@ impl Finder {
     pub fn word_right(&mut self) {
         let after = &self.query[self.cursor..];
         let rest = after
-            .trim_start_matches(|char: char| !char.is_alphanumeric())
+            .trim_start_matches(|c: char| !c.is_alphanumeric())
             .trim_start_matches(char::is_alphanumeric);
 
         self.cursor = self.query.len() - rest.len();
@@ -158,30 +160,30 @@ impl Finder {
         }
     }
 
-    // Where the word before the cursor starts, skipping the characters between. in_word tells
-    // which characters words are made of.
+    /// Where the word before the cursor starts, skipping the characters between. in_word tells
+    /// which characters words are made of.
     fn word_start(&self, in_word: impl Fn(char) -> bool) -> usize {
         self.query[..self.cursor]
-            .trim_end_matches(|char| !in_word(char))
+            .trim_end_matches(|c| !in_word(c))
             .trim_end_matches(in_word)
             .len()
     }
 
-    // Where the character before the cursor starts
+    /// Where the character before the cursor starts
     fn previous_boundary(&self) -> Option<usize> {
         let (start, _) = self.query[..self.cursor].char_indices().next_back()?;
 
         Some(start)
     }
 
-    // Where the character after the cursor ends
+    /// Where the character after the cursor ends
     fn next_boundary(&self) -> Option<usize> {
-        let char = self.query[self.cursor..].chars().next()?;
+        let c = self.query[self.cursor..].chars().next()?;
 
-        Some(self.cursor + char.len_utf8())
+        Some(self.cursor + c.len_utf8())
     }
 
-    // Moves the selection, staying within the matches
+    /// Moves the selection, staying within the matches
     fn select(&mut self, index: usize) {
         self.selected = index.min(self.matches.len().saturating_sub(1));
     }
@@ -204,8 +206,8 @@ impl Finder {
     }
 }
 
-// One command per distinct text, most recent first, with the entries it ran as. Bash keeps the
-// trailing space of a completed word, so `ls ` and `ls` count as one command.
+/// One command per distinct text, most recent first, with the entries it ran as. Bash keeps the
+/// trailing space of a completed word, so `ls ` and `ls` count as one command.
 fn commands(entries: &[Entry]) -> Vec<Command> {
     let mut commands: Vec<Command> = Vec::new();
     let mut positions: HashMap<&str, usize> = HashMap::new();
@@ -240,7 +242,7 @@ fn local_time(seconds: i64) -> Option<String> {
     Some(time.format(TIME_FORMAT).to_string())
 }
 
-// Case-insensitive substring search
+/// Case-insensitive substring search
 fn find(haystack: &str, needle: &str) -> Option<Range<usize>> {
     let mut starts = haystack
         .char_indices()
@@ -250,21 +252,21 @@ fn find(haystack: &str, needle: &str) -> Option<Range<usize>> {
     starts.find_map(|start| Some(start..start + prefix_len(&haystack[start..], needle)?))
 }
 
-// Byte length of needle at the start of haystack, ignoring case
+/// Byte length of needle at the start of haystack, ignoring case
 fn prefix_len(haystack: &str, needle: &str) -> Option<usize> {
     let mut chars = haystack.chars();
     let mut len = 0;
 
     for expected in needle.chars() {
-        let char = chars.next().filter(|&char| fold(char) == fold(expected))?;
-        len += char.len_utf8();
+        let c = chars.next().filter(|&c| fold(c) == fold(expected))?;
+        len += c.len_utf8();
     }
 
     Some(len)
 }
 
-fn fold(char: char) -> char {
-    char.to_lowercase().next().unwrap_or(char)
+fn fold(c: char) -> char {
+    c.to_lowercase().next().unwrap_or(c)
 }
 
 #[cfg(test)]
@@ -272,7 +274,7 @@ mod tests {
     use super::*;
     use crate::history;
 
-    // Two commands match p
+    /// Two commands match p
     const HISTORY: &[u8] = b"ls\npwd\nps\n";
 
     fn finder(query: &str) -> Finder {
@@ -321,7 +323,9 @@ mod tests {
     fn deletes_before_the_cursor_like_bash() {
         let mut finder = finder("git log");
 
-        (0..3).for_each(|_| finder.left());
+        for _ in 0..3 {
+            finder.left();
+        }
         finder.delete_to_start();
 
         assert_eq!((finder.query.as_str(), finder.cursor), ("log", 0));

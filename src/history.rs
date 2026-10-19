@@ -1,17 +1,21 @@
+//! Reading the bash history file and deleting entries from it
+
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::ops::Range;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
+use std::process;
+use std::str;
 
 pub struct Entry {
-    // The command as stored, without the newline that ends it
+    /// The command as stored, without the newline that ends it
     pub original: String,
-    // The command as shown in the finder: newlines, tabs and other control characters become spaces
+    /// The command as shown in the finder: newlines, tabs and other control characters become spaces
     pub text: String,
-    // Seconds since the epoch, from the #<epoch> line bash writes when HISTTIMEFORMAT is set
+    /// Seconds since the epoch, from the `#<epoch>` line bash writes when HISTTIMEFORMAT is set
     pub time: Option<i64>,
-    // Bytes of the entry in the file, including its timestamp line and trailing newline
+    /// Bytes of the entry in the file, including its timestamp line and trailing newline
     bytes: Range<usize>,
 }
 
@@ -35,18 +39,18 @@ impl History {
         })
     }
 
-    // Reads the file again, after a delete or changes from other shells
+    /// Reads the file again, after a delete or changes from other shells
     pub fn reload(&mut self) -> io::Result<()> {
         *self = Self::load(&self.path)?;
         Ok(())
     }
 
-    // Oldest first, like the file
+    /// Oldest first, like the file
     pub fn entries(&self) -> &[Entry] {
         &self.entries
     }
 
-    // Removes the entries from the file, keeping lines other shells appended since it was loaded
+    /// Removes the entries from the file, keeping lines other shells appended since it was loaded
     pub fn delete(&self, indices: &[usize]) -> io::Result<()> {
         let current = fs::read(&self.path)?;
         // A line appended after a last line without a newline joins it, so the loaded entries no
@@ -68,16 +72,36 @@ impl History {
     }
 }
 
-// The lines of an entry in the file
+/// The lines of an entry in the file
 struct EntryLines {
     timestamp: Option<Range<usize>>,
     command: Range<usize>,
 }
 
-// With HISTTIMEFORMAT set bash writes a #<epoch> line before each entry, which can start anywhere
-// in the file when the setting was turned on later. Like bash, a timestamp belongs to the line after
-// it. When the file starts with a timestamp, an entry also spans every line up to the next timestamp
-// (multi-line commands), otherwise every line is an entry.
+impl EntryLines {
+    /// None for a blank command
+    fn entry(self, content: &[u8]) -> Option<Entry> {
+        let time = self
+            .timestamp
+            .as_ref()
+            .and_then(|line| seconds(&content[line.clone()]));
+        let original = String::from_utf8_lossy(trim_newline(&content[self.command.clone()]));
+        let text = printable(&original);
+        let start = self.timestamp.map_or(self.command.start, |line| line.start);
+
+        (!text.trim().is_empty()).then(|| Entry {
+            original: original.into_owned(),
+            text,
+            time,
+            bytes: start..self.command.end,
+        })
+    }
+}
+
+/// With HISTTIMEFORMAT set bash writes a `#<epoch>` line before each entry, which can start anywhere
+/// in the file when the setting was turned on later. Like bash, a timestamp belongs to the line after
+/// it. When the file starts with a timestamp, an entry also spans every line up to the next timestamp
+/// (multi-line commands), otherwise every line is an entry.
 pub fn parse(content: &[u8]) -> Vec<Entry> {
     group(content, line_ranges(content))
         .into_iter()
@@ -85,7 +109,7 @@ pub fn parse(content: &[u8]) -> Vec<Entry> {
         .collect()
 }
 
-// Each line of content, with its newline
+/// Each line of content, with its newline
 fn line_ranges(content: &[u8]) -> Vec<Range<usize>> {
     let mut start = 0;
 
@@ -125,37 +149,17 @@ fn group(content: &[u8], lines: Vec<Range<usize>>) -> Vec<EntryLines> {
     entries
 }
 
-impl EntryLines {
-    // None for a blank command
-    fn entry(self, content: &[u8]) -> Option<Entry> {
-        let time = self
-            .timestamp
-            .as_ref()
-            .and_then(|line| seconds(&content[line.clone()]));
-        let original = String::from_utf8_lossy(trim_newline(&content[self.command.clone()]));
-        let text = printable(&original);
-        let start = self.timestamp.map_or(self.command.start, |line| line.start);
-
-        (!text.trim().is_empty()).then(|| Entry {
-            original: original.into_owned(),
-            text,
-            time,
-            bytes: start..self.command.end,
-        })
-    }
-}
-
 fn is_timestamp(line: &[u8]) -> bool {
     let line = trim_newline(line);
 
     line.len() > 1 && line[0] == b'#' && line[1..].iter().all(u8::is_ascii_digit)
 }
 
-// The seconds of a timestamp line, None when they overflow
+/// The seconds of a timestamp line, None when they overflow
 fn seconds(timestamp: &[u8]) -> Option<i64> {
     let digits = trim_newline(timestamp).strip_prefix(b"#")?;
 
-    std::str::from_utf8(digits).ok()?.parse().ok()
+    str::from_utf8(digits).ok()?.parse().ok()
 }
 
 fn trim_newline(line: &[u8]) -> &[u8] {
@@ -164,7 +168,7 @@ fn trim_newline(line: &[u8]) -> &[u8] {
 
 fn printable(text: &str) -> String {
     text.chars()
-        .map(|char| if char.is_control() { ' ' } else { char })
+        .map(|c| if c.is_control() { ' ' } else { c })
         .collect()
 }
 
@@ -190,15 +194,8 @@ fn write_atomically(path: &Path, content: &[u8]) -> io::Result<()> {
         .file_name()
         .map(|name| name.to_string_lossy())
         .unwrap_or_default();
-    let temp_path = path.with_file_name(format!(".{file_name}.hdf-{}", std::process::id()));
-
-    let result = (|| {
-        let mut file = create_private(&temp_path)?;
-        file.write_all(content)?;
-        file.sync_all()?;
-        fs::set_permissions(&temp_path, fs::metadata(path)?.permissions())?;
-        fs::rename(&temp_path, path)
-    })();
+    let temp_path = path.with_file_name(format!(".{file_name}.hdf-{}", process::id()));
+    let result = replace_through(path, &temp_path, content);
 
     if result.is_err() {
         let _ = fs::remove_file(&temp_path);
@@ -207,12 +204,23 @@ fn write_atomically(path: &Path, content: &[u8]) -> io::Result<()> {
     result
 }
 
-// A new file only its owner can read, as history holds whatever was typed on the command line.
-// A file left at the path by an earlier, killed run is replaced, as it may be readable by others.
+/// Writes the content to the temporary file, then moves it over the path with the path's
+/// permissions
+fn replace_through(path: &Path, temp_path: &Path, content: &[u8]) -> io::Result<()> {
+    let mut file = create_private(temp_path)?;
+    file.write_all(content)?;
+    file.sync_all()?;
+    fs::set_permissions(temp_path, fs::metadata(path)?.permissions())?;
+    fs::rename(temp_path, path)
+}
+
+/// A new file only its owner can read, as history holds whatever was typed on the command line.
+/// A file left at the path by an earlier, killed run is replaced, as it may be readable by others.
 fn create_private(path: &Path) -> io::Result<File> {
-    match fs::remove_file(path) {
-        Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
-        _ => {}
+    if let Err(error) = fs::remove_file(path)
+        && error.kind() != io::ErrorKind::NotFound
+    {
+        return Err(error);
     }
 
     OpenOptions::new()

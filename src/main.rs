@@ -1,3 +1,5 @@
+//! hdf, a finder for bash history: prints the command picked from $HISTFILE
+
 mod cli;
 mod config;
 mod context;
@@ -28,18 +30,18 @@ use history::History;
 use pane::Pane;
 use ui::Status;
 
-// How the finder was left
+/// How the finder was left
 #[derive(Debug, PartialEq)]
 enum Outcome {
-    // Enter on a command, to run it
+    /// Enter on a command, to run it
     Picked(String),
-    // Tab on a command, to edit it first
+    /// Tab on a command, to edit it first
     Edited(String),
-    // Esc, or Enter and Tab without matches
+    /// Esc, or Enter and Tab without matches
     Quit,
-    // Ctrl-C
+    /// Ctrl-C
     Abort,
-    // SIGINT, SIGTERM or SIGHUP, with its number
+    /// SIGINT, SIGTERM or SIGHUP, with its number
     Signaled(usize),
 }
 
@@ -114,7 +116,7 @@ fn run() -> Result<ExitCode, String> {
     }
 }
 
-// Runs the finder in a pane under the cursor's line, returns how it was left
+/// Runs the finder in a pane under the cursor's line, returns how it was left
 fn pick(
     finder: &mut Finder,
     history: &mut History,
@@ -156,8 +158,8 @@ fn pick(
     }
 }
 
-// Leaves the finder with an outcome, or stays with the status to show until the next key. PgUp and
-// PgDn move the selection by the page, the rows of the list.
+/// Leaves the finder with an outcome, or stays with the status to show until the next key. PgUp and
+/// PgDn move the selection by the page, the rows of the list.
 fn handle_key(
     key: KeyEvent,
     finder: &mut Finder,
@@ -202,14 +204,14 @@ fn handle_key(
         (KeyCode::Char('u'), true) => finder.delete_to_start(),
         (KeyCode::Char('w'), true) => finder.delete_big_word_back(),
         // Alt and a letter is a shortcut elsewhere, not text for the query
-        (KeyCode::Char(char), false) if !alt => finder.push(char),
+        (KeyCode::Char(c), false) if !alt => finder.push(c),
         _ => {}
     }
 
     Continue(None)
 }
 
-// Deletes every occurrence of the selected command and reloads the history
+/// Deletes every occurrence of the selected command and reloads the history
 fn delete(finder: &mut Finder, history: &mut History) -> Option<Status> {
     let command = finder.selection()?;
     let message = format!("deleted {}", command.text);
@@ -227,7 +229,7 @@ fn delete(finder: &mut Finder, history: &mut History) -> Option<Status> {
     })
 }
 
-// Prints the deleted commands, oldest first. Fewer commands than asked for deletes them all.
+/// Prints the deleted commands, oldest first. Fewer commands than asked for deletes them all.
 fn delete_last(count: usize) -> Result<(), String> {
     let history = load_history()?;
     let entries = history.entries();
@@ -281,15 +283,16 @@ mod tests {
     use super::*;
     use crate::test_util::TempFile;
 
-    // The finder lists the commands most recent first: echo, pwd, ls
+    /// The finder lists the commands most recent first: echo, pwd, ls
     const HISTORY: &str = "ls\npwd\necho\n";
-    // Rows of the list, for PgUp and PgDn
+    /// Rows of the list, for PgUp and PgDn
     const PAGE: usize = 2;
 
     const NONE: KeyModifiers = KeyModifiers::NONE;
     const CONTROL: KeyModifiers = KeyModifiers::CONTROL;
+    const ALT: KeyModifiers = KeyModifiers::ALT;
 
-    // The finder on a history file of its own
+    /// The finder on a history file of its own
     struct Session {
         file: TempFile,
         history: History,
@@ -322,7 +325,7 @@ mod tests {
             )
         }
 
-        // Presses a key that keeps the finder open without a status
+        /// Presses a key that keeps the finder open without a status
         fn edit(&mut self, code: KeyCode, modifiers: KeyModifiers) {
             assert_eq!(self.press(code, modifiers), Continue(None));
         }
@@ -379,8 +382,8 @@ mod tests {
     fn moves_the_cursor_and_edits_at_it() {
         let mut session = Session::open("cursor");
 
-        for char in "gt lg".chars() {
-            session.edit(KeyCode::Char(char), NONE);
+        for c in "gt lg".chars() {
+            session.edit(KeyCode::Char(c), NONE);
         }
 
         for (code, modifiers, query, cursor) in [
@@ -408,10 +411,9 @@ mod tests {
     #[test]
     fn moves_the_cursor_and_deletes_by_words() {
         let mut session = Session::open("words");
-        const ALT: KeyModifiers = KeyModifiers::ALT;
 
-        for char in "cd ~/src/utils".chars() {
-            session.edit(KeyCode::Char(char), NONE);
+        for c in "cd ~/src/utils".chars() {
+            session.edit(KeyCode::Char(c), NONE);
         }
 
         for (code, modifiers, query, cursor) in [
@@ -436,7 +438,7 @@ mod tests {
     fn leaves_alt_and_control_letters_out_of_the_query() {
         let mut session = Session::open("alt");
 
-        session.edit(KeyCode::Char('x'), KeyModifiers::ALT);
+        session.edit(KeyCode::Char('x'), ALT);
         session.edit(KeyCode::Char('x'), CONTROL);
 
         assert_eq!(session.finder.query, "");

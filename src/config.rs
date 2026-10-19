@@ -1,9 +1,11 @@
+//! The config file and the colors it sets
+
+use std::env;
 use std::fmt;
-use std::fs::OpenOptions;
-use std::io::Write;
+use std::fs::{self, OpenOptions};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::{env, fs, io};
 
 use ratatui::style::{Color, Modifier, Style};
 use serde::Deserialize;
@@ -11,8 +13,8 @@ use serde::de::{self, Deserializer, MapAccess, Visitor};
 
 use crate::context::Context;
 
-// The defaults as a config file, for --help and --init-config. A test keeps them the same as
-// Theme::default.
+/// The defaults as a config file, for --help and --init-config. A test keeps them the same as
+/// Theme::default.
 pub const DEFAULT: &str = r#"[colors]
 prompt   = { fg = "blue", bold = true }
 count    = "dark-gray"     # matches/commands
@@ -23,7 +25,7 @@ dim      = "dark-gray"     # times, numbers of runs, cuts, the divider
 selected = { bg = "238" }  # the selected row, under the match
 "#;
 
-// The config file, every key optional
+/// The config file, every key optional
 #[derive(Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
@@ -35,21 +37,21 @@ pub struct Config {
 pub struct Theme {
     #[serde(deserialize_with = "style")]
     pub prompt: Style,
-    // The match count right of the prompt
+    /// The match count right of the prompt
     #[serde(deserialize_with = "style")]
     pub count: Style,
-    // The status after Ctrl-D deleted a command, or failed to
+    /// The status after Ctrl-D deleted a command, or failed to
     #[serde(deserialize_with = "style")]
     pub deleted: Style,
     #[serde(deserialize_with = "style")]
     pub error: Style,
     #[serde(rename = "match", deserialize_with = "style")]
     pub matched: Style,
-    // The time column, the number of runs and the ellipses of cut commands, on rows other than
-    // the selected one, and the divider over the preview
+    /// The time column, the number of runs and the ellipses of cut commands, on rows other than
+    /// the selected one, and the divider over the preview
     #[serde(deserialize_with = "style")]
     pub dim: Style,
-    // The whole selected row, with the match drawn over it
+    /// The whole selected row, with the match drawn over it
     #[serde(deserialize_with = "style")]
     pub selected: Style,
 }
@@ -71,7 +73,7 @@ impl Default for Theme {
 }
 
 impl Config {
-    // Reads the config file, the defaults when there is none
+    /// Reads the config file, the defaults when there is none
     pub fn load() -> Result<Self, String> {
         let Some(path) = path() else {
             return Ok(Self::default());
@@ -84,7 +86,7 @@ impl Config {
         }
     }
 
-    // Writes the defaults to the config file, never over one already there, returns its path
+    /// Writes the defaults to the config file, never over one already there, returns its path
     pub fn init() -> Result<PathBuf, String> {
         let path = path().ok_or("XDG_CONFIG_HOME and HOME are not set")?;
         let cannot_create = |error: io::Error| format!("cannot create {}: {error}", path.display());
@@ -115,7 +117,7 @@ impl Config {
     }
 }
 
-// A relative XDG_CONFIG_HOME is invalid, the XDG spec says to ignore it
+/// A relative XDG_CONFIG_HOME is invalid, the XDG spec says to ignore it
 fn path() -> Option<PathBuf> {
     env::var_os("XDG_CONFIG_HOME")
         .filter(|dir| Path::new(dir).is_absolute())
@@ -124,7 +126,7 @@ fn path() -> Option<PathBuf> {
         .map(|dir| dir.join("hdf").join("config.toml"))
 }
 
-// A style is a table of colors and modifiers, or just a color for the foreground
+/// A style is a table of colors and modifiers, or just a color for the foreground
 fn style<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Style, D::Error> {
     struct StyleVisitor;
 
@@ -186,7 +188,7 @@ fn color<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<Color>, D:
     parse_color(&name).map(Some)
 }
 
-// Names like yellow and light-blue, 0 to 255, or #rrggbb
+/// Names like yellow and light-blue, 0 to 255, or #rrggbb
 fn parse_color<E: de::Error>(name: &str) -> Result<Color, E> {
     Color::from_str(name).map_err(|_| E::custom(format!("unknown color \"{name}\"")))
 }

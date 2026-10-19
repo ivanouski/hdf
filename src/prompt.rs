@@ -1,3 +1,5 @@
+//! The shell prompt, its SGR sequences turned into styled text
+
 use std::iter;
 use std::str::{Chars, Split};
 
@@ -9,7 +11,7 @@ const RESET: u16 = 0;
 const BOLD: u16 = 1;
 const DIM: u16 = 2;
 const ITALIC: u16 = 3;
-// With a style after a colon, as in 4:3 for curly, where 4:0 turns it off
+/// With a style after a colon, as in 4:3 for curly, where 4:0 turns it off
 const UNDERLINED: u16 = 4;
 const NOT_UNDERLINED_STYLE: u16 = 0;
 const SLOW_BLINK: u16 = 5;
@@ -18,7 +20,7 @@ const REVERSED: u16 = 7;
 const HIDDEN: u16 = 8;
 const CROSSED_OUT: u16 = 9;
 const DOUBLE_UNDERLINED: u16 = 21;
-// Neither bold nor dim
+/// Neither bold nor dim
 const NORMAL: u16 = 22;
 const NOT_ITALIC: u16 = 23;
 const NOT_UNDERLINED: u16 = 24;
@@ -28,7 +30,7 @@ const NOT_HIDDEN: u16 = 28;
 const NOT_CROSSED_OUT: u16 = 29;
 const FG_BLACK: u16 = 30;
 const FG_WHITE: u16 = 37;
-// Followed by INDEXED or RGB and their numbers, after semicolons or colons
+/// Followed by INDEXED or RGB and their numbers, after semicolons or colons
 const FG_EXTENDED: u16 = 38;
 const FG_DEFAULT: u16 = 39;
 const BG_BLACK: u16 = 40;
@@ -42,7 +44,7 @@ const BG_BRIGHT_WHITE: u16 = 107;
 const INDEXED: u16 = 5;
 const RGB: u16 = 2;
 
-// From black to white, in the order of their codes
+/// From black to white, in the order of their codes
 const COLORS: [Color; 8] = [
     Color::Black,
     Color::Red,
@@ -64,16 +66,16 @@ const BRIGHT_COLORS: [Color; 8] = [
     Color::White,
 ];
 
-// The last line of a prompt as bash prints it, from ${PS1@P}, styled by its SGR sequences. Other
-// escape sequences, like a window title, and control characters, like the \[ \] markers bash
-// turns into \001 and \002, are left out.
+/// The last line of a prompt as bash prints it, from `${PS1@P}`, styled by its SGR sequences. Other
+/// escape sequences, like a window title, and control characters, like the `\[` `\]` markers bash
+/// turns into `\001` and `\002`, are left out.
 pub fn parse(text: &str) -> Line<'static> {
     let mut spans: Vec<Span<'static>> = Vec::new();
     let mut style = Style::new();
     let mut chars = text.chars();
 
-    while let Some(char) = chars.next() {
-        match char {
+    while let Some(c) = chars.next() {
+        match c {
             '\x1b' => {
                 if let Some(params) = escape(&mut chars) {
                     style = sgr(style, &params);
@@ -82,10 +84,10 @@ pub fn parse(text: &str) -> Line<'static> {
             // A style set on an earlier line still holds on the last one. A carriage return starts
             // the line over, as prompts with a part on the right do after printing it.
             '\n' | '\r' => spans.clear(),
-            char if char.is_control() => {}
-            char => match spans.last_mut() {
-                Some(span) if span.style == style => span.content.to_mut().push(char),
-                _ => spans.push(Span::styled(char.to_string(), style)),
+            c if c.is_control() => {}
+            c => match spans.last_mut() {
+                Some(span) if span.style == style => span.content.to_mut().push(c),
+                _ => spans.push(Span::styled(c.to_string(), style)),
             },
         }
     }
@@ -93,7 +95,7 @@ pub fn parse(text: &str) -> Line<'static> {
     Line::from(spans)
 }
 
-// Skips the sequence after an escape, returns its parameters when it sets a style
+/// Skips the sequence after an escape, returns its parameters when it sets a style
 fn escape(chars: &mut Chars) -> Option<String> {
     match chars.next()? {
         '[' => {
@@ -101,24 +103,22 @@ fn escape(chars: &mut Chars) -> Option<String> {
 
             // Parameter and intermediate bytes up to the final one. Private sequences, like
             // \e[>4;2m for keyboard modes, end with m too, but have more than digits, ; and :.
-            for char in chars.by_ref() {
-                if ('@'..='~').contains(&char) {
-                    let codes = params
-                        .chars()
-                        .all(|char| matches!(char, '0'..='9' | ';' | ':'));
+            for c in chars.by_ref() {
+                if ('@'..='~').contains(&c) {
+                    let codes = params.chars().all(|c| matches!(c, '0'..='9' | ';' | ':'));
 
-                    return (char == 'm' && codes).then_some(params);
+                    return (c == 'm' && codes).then_some(params);
                 }
 
-                params.push(char);
+                params.push(c);
             }
 
             None
         }
         // An OSC, like a window title, ends with BEL or ESC \
         ']' => {
-            while let Some(char) = chars.next() {
-                match char {
+            while let Some(c) = chars.next() {
+                match c {
                     '\x07' => break,
                     '\x1b' => {
                         chars.next();
@@ -131,9 +131,9 @@ fn escape(chars: &mut Chars) -> Option<String> {
             None
         }
         // Intermediate bytes, then the final one, like ESC ( B from tput sgr0
-        mut char => {
-            while (' '..='/').contains(&char) {
-                char = chars.next()?;
+        mut c => {
+            while (' '..='/').contains(&c) {
+                c = chars.next()?;
             }
 
             None
@@ -195,13 +195,13 @@ fn sgr(mut style: Style, params: &str) -> Style {
     style
 }
 
-// Empty codes count as 0
+/// Empty codes count as 0
 fn number(code: &str) -> u16 {
     code.parse().unwrap_or(0)
 }
 
-// The color after FG_EXTENDED or BG_EXTENDED, in its parts after colons or in the codes after it:
-// an index of 256 colors, or red, green and blue. After colons a color space may come first.
+/// The color after FG_EXTENDED or BG_EXTENDED, in its parts after colons or in the codes after it:
+/// an index of 256 colors, or red, green and blue. After colons a color space may come first.
 fn extended_color(parts: &[u16], params: &mut Split<char>) -> Option<Color> {
     let parts = if parts.is_empty() {
         let kind = number(params.next()?);

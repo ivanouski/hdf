@@ -1,3 +1,5 @@
+//! Raw mode, stdout and signals while the finder runs
+
 use std::io::{self, Write};
 use std::os::fd::{AsFd, OwnedFd};
 use std::process;
@@ -26,8 +28,8 @@ impl Drop for RawMode {
     }
 }
 
-// Points stdout at the terminal until dropped. crossterm asks the terminal for the cursor position
-// on stdout, which is a pipe when the command is captured, as in the bash setup.
+/// Points stdout at the terminal until dropped. crossterm asks the terminal for the cursor position
+/// on stdout, which is a pipe when the command is captured, as in the bash setup.
 pub struct StdoutToTty {
     saved: OwnedFd,
 }
@@ -47,9 +49,9 @@ impl Drop for StdoutToTty {
     }
 }
 
-// Raw mode keeps Ctrl-C from sending SIGINT, but other processes can still send signals: they are
-// taken as a way out, so the pane is cleared and the terminal restored like on Esc. Returns the
-// number of the signal once one arrived, 0 until then.
+/// Raw mode keeps Ctrl-C from sending SIGINT, but other processes can still send signals: they are
+/// taken as a way out, so the pane is cleared and the terminal restored like on Esc. Returns the
+/// number of the signal once one arrived, 0 until then.
 pub fn watch_signals() -> io::Result<Arc<AtomicUsize>> {
     let signal = Arc::new(AtomicUsize::new(0));
 
@@ -62,8 +64,8 @@ pub fn watch_signals() -> io::Result<Arc<AtomicUsize>> {
     Ok(signal)
 }
 
-// crossterm keeps reading a closed terminal and never returns, so the event loop never sees the
-// signal that came with closing it. Exits for the signal once the loop has had time to clean up.
+/// crossterm keeps reading a closed terminal and never returns, so the event loop never sees the
+/// signal that came with closing it. Exits for the signal once the loop has had time to clean up.
 fn exit_when_stuck(signal: Arc<AtomicUsize>) {
     // Compared with the parent at the start, not with 1: a shell that is PID 1, as in a container,
     // runs hdf as its child
@@ -90,12 +92,12 @@ fn exit_when_stuck(signal: Arc<AtomicUsize>) {
     });
 }
 
-// The exit status for a signal, as shells report it
+/// The exit status for a signal, as shells report it
 pub fn signal_status(signal: usize) -> u8 {
     128 + signal as u8
 }
 
-// The next terminal event, or None once a signal arrived
+/// The next terminal event, or None once a signal arrived
 pub fn next_event(signal: &AtomicUsize) -> io::Result<Option<Event>> {
     loop {
         if signal.load(Ordering::Relaxed) != 0 {
