@@ -11,7 +11,8 @@ Build and install the binary into `~/.cargo/bin`:
 cargo install --path .
 ```
 
-Load the key bindings in `~/.bashrc`. Copy `home/.hdfrc` anywhere and source it:
+Load the key bindings in `~/.bashrc`, they need bash 4.0 or later. Copy `home/.hdfrc` anywhere and
+source it:
 
 ```bash
 [[ -f ~/.hdfrc ]] && . ~/.hdfrc
