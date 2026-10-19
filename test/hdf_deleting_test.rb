@@ -13,7 +13,7 @@ class HdfDeletingTest < HdfTestCase
 
     delete
     assert_match(/deleted sbx run claude\z/, @session.screen.first)
-    assert_equal ['> sbx run'], pane
+    assert_equal ['> sbx run', 'no matches'], pane
     assert_equal HISTORY.lines.grep_v(/\Asbx run/).join, File.read(@history)
   end
 

@@ -97,18 +97,18 @@ class HdfListingTest < HdfTestCase
     assert_equal ['> claud', 'Claude', 'claude --resume', 'sbx run claude (3)', 'sbx build claude'], pane
   end
 
-  def test_shows_nothing_without_matches
+  def test_says_so_without_matches
     start('nothing like it')
 
     assert_match(%r{\A> nothing like it +0/15\z}, @session.screen.first)
-    assert_equal ['> nothing like it'], pane
+    assert_equal ['> nothing like it', 'no matches'], pane
   end
 
   def test_matches_stars_literally
     File.write(@history, "claude\nls *.rb\n")
     start('*aude')
 
-    assert_equal ['> *aude'], pane
+    assert_equal ['> *aude', 'no matches'], pane
 
     @session.press(:ctrl_u)
     @session.type('*.rb')

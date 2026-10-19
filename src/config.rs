@@ -19,7 +19,7 @@ pub const DEFAULT: &str = r#"[colors]
 prompt   = { fg = "blue", bold = true }
 count    = "dark-gray"     # matches/commands
 deleted  = "green"         # the status after Ctrl-D
-error    = "red"           # Ctrl-D failed
+error    = "red"           # Ctrl-D failed, the count of no matches
 match    = { fg = "yellow", bold = true }
 dim      = "dark-gray"     # times, numbers of runs, cuts, the divider
 selected = { bg = "238" }  # the selected row, under the match

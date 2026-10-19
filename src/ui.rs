@@ -18,6 +18,9 @@ const INDENT: usize = 2;
 const TIME_COLUMN: usize = TIME_WIDTH + 2;
 /// In place of the text cut from a command
 const ELLIPSIS: &str = "…";
+/// In place of the list when nothing matches, or the history is empty
+const NO_MATCHES: &str = "no matches";
+const NO_COMMANDS: &str = "no commands";
 /// Most lines of the preview, the last one ending in … when the command needs more
 const PREVIEW_LINES: usize = 3;
 /// Kept for the list when the preview takes rows from it
@@ -70,6 +73,13 @@ pub fn draw(
         list_area,
         &mut ListState::default().with_selected(selected),
     );
+
+    if finder.matches().is_empty() {
+        frame.render_widget(
+            Paragraph::new(nothing_found(finder, &layout, theme)),
+            list_area,
+        );
+    }
     frame.render_widget(Paragraph::new(preview), preview_area);
 
     height
@@ -170,10 +180,27 @@ fn count(finder: &Finder, theme: &Theme, status: Option<&Status>, width: u16) ->
     let (text, style) = match status {
         Some(Status::Deleted(message)) => (message.as_str(), theme.deleted),
         Some(Status::Failed(message)) => (message.as_str(), theme.error),
+        // No matches in the color of an error, so the pane doesn't pass for the shell's prompt
+        None if finder.matches().is_empty() => (matches.as_str(), theme.error),
         None => (matches.as_str(), theme.count),
     };
 
     Span::styled(cut(text, width.into()), style)
+}
+
+/// In place of the list when nothing matches, where the commands would start
+fn nothing_found(finder: &Finder, layout: &RowLayout, theme: &Theme) -> Line<'static> {
+    let time_width = if finder.has_times() { TIME_COLUMN } else { 0 };
+    let text = if finder.commands().is_empty() {
+        NO_COMMANDS
+    } else {
+        NO_MATCHES
+    };
+
+    Line::from(vec![
+        Span::raw(" ".repeat(layout.indent.len() + time_width)),
+        Span::styled(text, theme.dim),
+    ])
 }
 
 fn matches(finder: &Finder) -> String {
@@ -581,6 +608,28 @@ mod tests {
     }
 
     #[test]
+    fn says_so_where_the_commands_would_start_when_nothing_matches() {
+        let finder = Finder::new(&history::parse(HISTORY.as_bytes()), "pwd".to_string());
+        let theme = Theme::default();
+        let buffer = render(&finder, &theme);
+
+        assert_eq!(
+            text(&buffer, 1).trim_end(),
+            format!("{}no matches", " ".repeat(20))
+        );
+        assert_eq!(buffer[(20, 1)].fg, Color::DarkGray);
+        assert!(text(&buffer, 0).ends_with(" 0/2"));
+        assert_eq!(buffer[(39, 0)].fg, theme.error.fg.unwrap());
+    }
+
+    #[test]
+    fn says_there_are_no_commands_for_an_empty_history() {
+        let buffer = render_with_prompt(&finder(""), &Theme::default(), Some("$ "), 40);
+
+        assert_eq!(text(&buffer, 1).trim_end(), "  no commands");
+    }
+
+    #[test]
     fn dims_the_times_of_other_rows() {
         let buffer = render(&finder(HISTORY), &Theme::default());
         let cell = |x| &buffer[(x, 2)];
@@ -711,8 +760,9 @@ mod tests {
         for x in 3..15 {
             assert_eq!(buffer[(x, 0)].fg, Color::Reset);
         }
+        // Nothing matches the query, so the count is in the error color
         for x in 17..20 {
-            assert_eq!(buffer[(x, 0)].fg, theme.count.fg.unwrap());
+            assert_eq!(buffer[(x, 0)].fg, theme.error.fg.unwrap());
         }
     }
 

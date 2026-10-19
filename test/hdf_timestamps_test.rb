@@ -35,6 +35,6 @@ class HdfTimestampsTest < HdfTestCase
     File.write(@history, "#1700000000\npwd\n")
     start('2023')
 
-    assert_equal ['> 2023'], pane
+    assert_equal ['> 2023', 'no matches'], pane
   end
 end
