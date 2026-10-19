@@ -70,14 +70,7 @@ pub fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<Args, Stri
     let args: Vec<OsString> = args.into_iter().collect();
 
     if args.first().is_some_and(|arg| arg == "--delete-last") {
-        return match &args[1..] {
-            [] => Ok(Args::DeleteLast(1)),
-            // Asked for as anywhere else, not taken for a count
-            [help] if help == "-h" || help == "--help" => Ok(Args::Help),
-            [version] if version == "-V" || version == "--version" => Ok(Args::Version),
-            [count] => parse_count(&count.to_string_lossy()).map(Args::DeleteLast),
-            _ => Err(usage_error(DELETE_LAST_ALONE)),
-        };
+        return parse_delete_last(&args[1..]);
     }
 
     let mut args = args.into_iter();
@@ -115,6 +108,18 @@ pub fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<Args, Stri
         print_query,
         prompt,
     })
+}
+
+/// The arguments after `--delete-last`, which takes nothing but a count
+fn parse_delete_last(args: &[OsString]) -> Result<Args, String> {
+    match args {
+        [] => Ok(Args::DeleteLast(1)),
+        // Asked for as anywhere else, not taken for a count
+        [help] if help == "-h" || help == "--help" => Ok(Args::Help),
+        [version] if version == "-V" || version == "--version" => Ok(Args::Version),
+        [count] => parse_count(&count.to_string_lossy()).map(Args::DeleteLast),
+        _ => Err(usage_error(DELETE_LAST_ALONE)),
+    }
 }
 
 /// Digits only, so a sign or an option in its place is rejected

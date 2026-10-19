@@ -55,32 +55,43 @@ pub fn draw(
     .areas(area);
 
     draw_prompt_line(frame, prompt_area, shell_prompt, finder, theme, status);
+    let height = draw_list(frame, list_area, finder, &layout, theme, offset);
+    frame.render_widget(Paragraph::new(preview), preview_area);
 
+    height
+}
+
+/// Draws the matches in view, or says there are none, returns the rows of the list
+fn draw_list(
+    frame: &mut Frame,
+    area: Rect,
+    finder: &Finder,
+    layout: &RowLayout,
+    theme: &Theme,
+    offset: &mut usize,
+) -> usize {
     // Only the rows in view are built, the list scrolls like ratatui's would with all of them
-    let height = usize::from(list_area.height);
+    let height = usize::from(area.height);
     *offset = list_offset(*offset, finder, height);
+
+    if finder.matches().is_empty() {
+        frame.render_widget(Paragraph::new(nothing_found(finder, layout, theme)), area);
+        return height;
+    }
+
     let rows = finder
         .matches()
         .iter()
         .enumerate()
         .skip(*offset)
         .take(height)
-        .map(|(index, found)| row(finder, found, index == finder.selected(), &layout, theme));
-    let selected = (!finder.matches().is_empty()).then(|| finder.selected() - *offset);
+        .map(|(index, found)| row(finder, found, index == finder.selected(), layout, theme));
 
     frame.render_stateful_widget(
         List::new(rows),
-        list_area,
-        &mut ListState::default().with_selected(selected),
+        area,
+        &mut ListState::default().with_selected(Some(finder.selected() - *offset)),
     );
-
-    if finder.matches().is_empty() {
-        frame.render_widget(
-            Paragraph::new(nothing_found(finder, &layout, theme)),
-            list_area,
-        );
-    }
-    frame.render_widget(Paragraph::new(preview), preview_area);
 
     height
 }
