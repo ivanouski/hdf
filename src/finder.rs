@@ -29,6 +29,8 @@ pub struct Match {
 
 pub struct Finder {
     pub commands: Vec<Command>,
+    // Whether any command has a time, so the finder shows a column for them
+    pub has_times: bool,
     pub query: String,
     // Bytes into the query, where typing goes in
     pub cursor: usize,
@@ -38,8 +40,10 @@ pub struct Finder {
 
 impl Finder {
     pub fn new(entries: &[Entry], query: String) -> Self {
+        let commands = commands(entries);
         let mut finder = Self {
-            commands: commands(entries),
+            has_times: commands.iter().any(|command| command.time.is_some()),
+            commands,
             cursor: query.len(),
             query,
             matches: Vec::new(),

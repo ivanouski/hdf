@@ -26,20 +26,18 @@ pub enum Status {
     Failed(String),
 }
 
-// Returns the rows of the list, a page for PgUp and PgDn
+// Returns the rows of the list, a page for PgUp and PgDn. The offset is the first match in view,
+// kept from one draw to the next.
 pub fn draw(
     frame: &mut Frame,
     finder: &Finder,
     theme: &Theme,
     prompt: Option<&Line>,
     status: Option<&Status>,
-    list: &mut ListState,
+    offset: &mut usize,
 ) -> usize {
     let area = frame.area();
-    // The shell prompt when it shows anything and takes at most 60% of the pane, so the query has
-    // room, > otherwise
-    let shell_prompt = prompt
-        .filter(|prompt| prompt.width() > 0 && prompt.width() * 5 <= usize::from(area.width) * 3);
+    let shell_prompt = shell_prompt(prompt, area.width);
     let layout = RowLayout::new(finder, shell_prompt.map(Line::width), area.width);
     let preview = preview(finder, &layout, area, theme).unwrap_or_default();
     let [prompt_area, list_area, preview_area] = Layout::vertical([
@@ -51,17 +49,46 @@ pub fn draw(
 
     draw_prompt_line(frame, prompt_area, shell_prompt, finder, theme, status);
 
+    // Only the rows in view are built, the list scrolls like ratatui's would with all of them
+    let height = usize::from(list_area.height);
+    *offset = list_offset(*offset, finder, height);
     let rows = finder
         .matches
         .iter()
         .enumerate()
+        .skip(*offset)
+        .take(height)
         .map(|(index, found)| row(finder, found, index == finder.selected, &layout, theme));
+    let selected = (!finder.matches.is_empty()).then(|| finder.selected - *offset);
 
-    list.select((!finder.matches.is_empty()).then_some(finder.selected));
-    frame.render_stateful_widget(List::new(rows), list_area, list);
+    frame.render_stateful_widget(
+        List::new(rows),
+        list_area,
+        &mut ListState::default().with_selected(selected),
+    );
     frame.render_widget(Paragraph::new(preview), preview_area);
 
-    usize::from(list_area.height)
+    height
+}
+
+// The first match in view: the one before, moved just enough to keep the selected match in view.
+// A list without rows starts at the selected match.
+fn list_offset(offset: usize, finder: &Finder, height: usize) -> usize {
+    let offset = offset.min(finder.matches.len().saturating_sub(1));
+
+    if finder.selected < offset {
+        finder.selected
+    } else if finder.selected >= offset + height {
+        (finder.selected + 1).saturating_sub(height.max(1))
+    } else {
+        offset
+    }
+}
+
+// The shell prompt when it shows anything and takes at most 60% of the pane, so the query has
+// room, None for > in its place
+pub fn shell_prompt<'a>(prompt: Option<&'a Line<'a>>, width: u16) -> Option<&'a Line<'a>> {
+    prompt.filter(|prompt| prompt.width() > 0 && prompt.width() * 5 <= usize::from(width) * 3)
 }
 
 fn draw_prompt_line(
@@ -151,8 +178,6 @@ fn matches(finder: &Finder) -> String {
 
 // What every row starts with
 struct RowLayout {
-    // A time column only when the history has timestamps, blank for commands from before
-    has_times: bool,
     // Before the time, or before the command without times
     indent: String,
     // Left for the command and its number of runs
@@ -161,12 +186,10 @@ struct RowLayout {
 
 impl RowLayout {
     fn new(finder: &Finder, prompt_width: Option<usize>, pane_width: u16) -> Self {
-        let has_times = finder.commands.iter().any(|command| command.time.is_some());
-        let time_width = if has_times { TIME_WIDTH + 2 } else { 0 };
+        let time_width = if finder.has_times { TIME_WIDTH + 2 } else { 0 };
         let column = command_column(prompt_width, time_width);
 
         Self {
-            has_times,
             indent: " ".repeat(column - time_width),
             command_width: usize::from(pane_width).saturating_sub(column),
         }
@@ -206,7 +229,7 @@ fn row<'a>(
     let fitted = layout.fit(command, &found.range);
     let mut spans = vec![Span::raw(layout.indent.as_str())];
 
-    if layout.has_times {
+    if finder.has_times {
         let time = command.time.as_deref().unwrap_or_default();
         spans.push(Span::styled(format!("{time:<TIME_WIDTH$}  "), dim));
     }
@@ -462,12 +485,26 @@ mod tests {
         let mut page = 0;
         terminal
             .draw(|frame| {
-                let list = &mut ListState::default();
-                page = draw(frame, finder, theme, prompt.as_ref(), None, list);
+                page = draw(frame, finder, theme, prompt.as_ref(), None, &mut 0);
             })
             .unwrap();
 
         (terminal.backend().buffer().clone(), page)
+    }
+
+    // The commands on the rows of the list, with the offset kept from the draws before
+    fn listed(finder: &Finder, height: u16, offset: &mut usize) -> Vec<String> {
+        let mut terminal = Terminal::new(TestBackend::new(40, height)).unwrap();
+        terminal
+            .draw(|frame| {
+                draw(frame, finder, &Theme::default(), None, None, offset);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+
+        (1..height)
+            .map(|y| text(buffer, y).trim().to_string())
+            .collect()
     }
 
     fn page(finder: &Finder, height: u16) -> usize {
@@ -498,6 +535,40 @@ mod tests {
         assert!(cell(20).modifier.contains(Modifier::BOLD));
         // Neither the time nor the rest of the command dimmed
         assert!((0..20).chain(22..40).all(|x| cell(x).fg == Color::Reset));
+    }
+
+    #[test]
+    fn scrolls_the_list_only_to_keep_the_selection_in_view() {
+        let mut finder = finder("ls 1\nls 2\nls 3\nls 4\nls 5\nls 6\n");
+        let commands: Vec<String> = finder
+            .matches
+            .iter()
+            .map(|found| finder.commands[found.command_index].text.clone())
+            .collect();
+        let offset = &mut 0;
+
+        assert_eq!(listed(&finder, 4, offset), commands[0..3]);
+
+        finder.selected = 4;
+        assert_eq!(listed(&finder, 4, offset), commands[2..5]);
+
+        // Back up a row, still in view
+        finder.selected = 3;
+        assert_eq!(listed(&finder, 4, offset), commands[2..5]);
+
+        finder.selected = 1;
+        assert_eq!(listed(&finder, 4, offset), commands[1..4]);
+    }
+
+    #[test]
+    fn draws_without_rows_for_the_list() {
+        let mut finder = finder("ls 1\nls 2\n");
+        finder.selected = 1;
+        let offset = &mut 0;
+
+        // A pane of one row has only the prompt line
+        assert!(listed(&finder, 1, offset).is_empty());
+        assert_eq!(*offset, 1);
     }
 
     #[test]
@@ -551,8 +622,7 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(40, 4)).unwrap();
         terminal
             .draw(|frame| {
-                let list = &mut ListState::default();
-                draw(frame, &finder, &Theme::default(), None, None, list);
+                draw(frame, &finder, &Theme::default(), None, None, &mut 0);
             })
             .unwrap();
 
@@ -577,14 +647,13 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(20, 4)).unwrap();
         terminal
             .draw(|frame| {
-                let list = &mut ListState::default();
                 draw(
                     frame,
                     &finder,
                     &Theme::default(),
                     prompt.as_ref(),
                     status,
-                    list,
+                    &mut 0,
                 );
             })
             .unwrap();

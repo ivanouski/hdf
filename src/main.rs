@@ -19,7 +19,6 @@ use std::sync::atomic::Ordering;
 
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::text::Line;
-use ratatui::widgets::ListState;
 
 use cli::Args;
 use config::{Config, Theme};
@@ -123,14 +122,14 @@ fn pick(
     prompt: Option<&Line>,
 ) -> io::Result<Outcome> {
     let mut pane = Pane::open()?;
-    let mut list = ListState::default();
+    let mut offset = 0;
     let mut status = None;
     let mut page = 1;
     let signal = tty::watch_signals()?;
 
     let outcome = loop {
         pane.draw(|frame| {
-            page = ui::draw(frame, finder, theme, prompt, status.as_ref(), &mut list);
+            page = ui::draw(frame, finder, theme, prompt, status.as_ref(), &mut offset);
         })?;
 
         match tty::next_event(&signal)? {
@@ -146,7 +145,9 @@ fn pick(
         }
     };
 
-    let closed = pane.close();
+    // The shell prompt stays for bash to draw over
+    let width = pane.width();
+    let closed = pane.close(ui::shell_prompt(prompt, width).map_or(0, Line::width));
 
     // After SIGHUP the terminal may be gone, the signal still decides the exit status
     match outcome {
