@@ -135,7 +135,7 @@ fn usage_error(message: &str) -> String {
 pub fn help() -> String {
     let defaults: String = config::DEFAULT
         .lines()
-        .map(|line| format!("    {line}\n"))
+        .flat_map(|line| ["    ", line, "\n"])
         .collect();
 
     USAGE.replace("{defaults}\n", &defaults)
@@ -155,25 +155,25 @@ mod tests {
         OsString::from_vec(text.to_vec())
     }
 
-    fn search(query: &str, print_query: bool) -> Result<Args, String> {
-        Ok(Args::Search {
+    fn search(query: &str, print_query: bool) -> Args {
+        Args::Search {
             query: query.to_string(),
             print_query,
             prompt: None,
-        })
+        }
     }
 
     #[test]
     fn joins_the_words_into_the_query() {
-        assert_eq!(parse(&[]), search("", false));
-        assert_eq!(parse(&["git", "log"]), search("git log", false));
+        assert_eq!(parse(&[]), Ok(search("", false)));
+        assert_eq!(parse(&["git", "log"]), Ok(search("git log", false)));
     }
 
     #[test]
     fn reads_options_between_the_words() {
         assert_eq!(
             parse(&["git", "--print-query", "log"]),
-            search("git log", true)
+            Ok(search("git log", true))
         );
     }
 
@@ -220,13 +220,13 @@ mod tests {
     fn takes_everything_after_a_double_dash_for_the_query() {
         assert_eq!(
             parse(&["--", "--help", "-x", "--delete-last"]),
-            search("--help -x --delete-last", false)
+            Ok(search("--help -x --delete-last", false))
         );
     }
 
     #[test]
     fn takes_a_lone_dash_for_the_query() {
-        assert_eq!(parse(&["cd", "-"]), search("cd -", false));
+        assert_eq!(parse(&["cd", "-"]), Ok(search("cd -", false)));
     }
 
     #[test]

@@ -1,0 +1,2 @@
+# Key names in the docs, not code
+doc-valid-idents = ["PgUp", "PgDn", ".."]

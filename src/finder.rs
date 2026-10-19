@@ -13,6 +13,7 @@ const TIME_FORMAT: &str = "%Y-%m-%d %H:%M";
 pub const TIME_WIDTH: usize = "2023-11-14 22:13".len();
 
 /// A distinct command and every history entry holding it, most recent first
+#[derive(Debug)]
 pub struct Command {
     /// As shown in the finder, without trailing whitespace
     pub text: String,
@@ -23,21 +24,25 @@ pub struct Command {
     pub entry_indices: Vec<usize>,
 }
 
+#[derive(Debug)]
 pub struct Match {
     pub command_index: usize,
     /// Bytes of the command matched by the query, for highlighting
     pub range: Range<usize>,
 }
 
+#[derive(Debug)]
 pub struct Finder {
-    pub commands: Vec<Command>,
+    commands: Vec<Command>,
     /// Whether any command has a time, so the finder shows a column for them
-    pub has_times: bool,
-    pub query: String,
-    /// Bytes into the query, where typing goes in
-    pub cursor: usize,
-    pub matches: Vec<Match>,
-    pub selected: usize,
+    has_times: bool,
+    query: String,
+    /// Bytes into the query, where typing goes in, always on a character boundary
+    cursor: usize,
+    /// The commands the query matches, kept in step with it
+    matches: Vec<Match>,
+    /// Index into the matches, 0 without any
+    selected: usize,
 }
 
 impl Finder {
@@ -61,6 +66,30 @@ impl Finder {
         *self = Self::new(entries, mem::take(&mut self.query));
         self.cursor = cursor;
         self.select(selected);
+    }
+
+    pub fn commands(&self) -> &[Command] {
+        &self.commands
+    }
+
+    pub fn has_times(&self) -> bool {
+        self.has_times
+    }
+
+    pub fn query(&self) -> &str {
+        &self.query
+    }
+
+    pub fn cursor(&self) -> usize {
+        self.cursor
+    }
+
+    pub fn matches(&self) -> &[Match] {
+        &self.matches
+    }
+
+    pub fn selected(&self) -> usize {
+        self.selected
     }
 
     pub fn push(&mut self, c: char) {
@@ -146,6 +175,11 @@ impl Finder {
         self.select(self.selected + rows.max(1));
     }
 
+    /// Moves the selection, staying within the matches
+    pub fn select(&mut self, index: usize) {
+        self.selected = index.min(self.matches.len().saturating_sub(1));
+    }
+
     pub fn selection(&self) -> Option<&Command> {
         self.matches
             .get(self.selected)
@@ -160,7 +194,7 @@ impl Finder {
         }
     }
 
-    /// Where the word before the cursor starts, skipping the characters between. in_word tells
+    /// Where the word before the cursor starts, skipping the characters between. `in_word` tells
     /// which characters words are made of.
     fn word_start(&self, in_word: impl Fn(char) -> bool) -> usize {
         self.query[..self.cursor]
@@ -181,11 +215,6 @@ impl Finder {
         let c = self.query[self.cursor..].chars().next()?;
 
         Some(self.cursor + c.len_utf8())
-    }
-
-    /// Moves the selection, staying within the matches
-    fn select(&mut self, index: usize) {
-        self.selected = index.min(self.matches.len().saturating_sub(1));
     }
 
     fn refilter(&mut self) {
@@ -215,21 +244,18 @@ fn commands(entries: &[Entry]) -> Vec<Command> {
     for (index, entry) in entries.iter().enumerate().rev() {
         let text = entry.text.trim_end();
 
-        match positions.get(text) {
-            Some(&position) => {
-                let command = &mut commands[position];
-                command.entry_indices.push(index);
-                command.time = command.time.take().or_else(|| local_time(entry.time?));
-            }
-            None => {
-                positions.insert(text, commands.len());
-                commands.push(Command {
-                    text: text.to_string(),
-                    original: entry.original.clone(),
-                    time: entry.time.and_then(local_time),
-                    entry_indices: vec![index],
-                });
-            }
+        if let Some(&position) = positions.get(text) {
+            let command = &mut commands[position];
+            command.entry_indices.push(index);
+            command.time = command.time.take().or_else(|| local_time(entry.time?));
+        } else {
+            positions.insert(text, commands.len());
+            commands.push(Command {
+                text: text.to_string(),
+                original: entry.original.clone(),
+                time: entry.time.and_then(local_time),
+                entry_indices: vec![index],
+            });
         }
     }
 

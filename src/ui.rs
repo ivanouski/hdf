@@ -45,7 +45,7 @@ pub fn draw(
     let [prompt_area, list_area, preview_area] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Fill(1),
-        Constraint::Length(preview.len() as u16),
+        Constraint::Length(saturating_u16(preview.len())),
     ])
     .areas(area);
 
@@ -55,13 +55,13 @@ pub fn draw(
     let height = usize::from(list_area.height);
     *offset = list_offset(*offset, finder, height);
     let rows = finder
-        .matches
+        .matches()
         .iter()
         .enumerate()
         .skip(*offset)
         .take(height)
-        .map(|(index, found)| row(finder, found, index == finder.selected, &layout, theme));
-    let selected = (!finder.matches.is_empty()).then(|| finder.selected - *offset);
+        .map(|(index, found)| row(finder, found, index == finder.selected(), &layout, theme));
+    let selected = (!finder.matches().is_empty()).then(|| finder.selected() - *offset);
 
     frame.render_stateful_widget(
         List::new(rows),
@@ -76,12 +76,12 @@ pub fn draw(
 /// The first match in view: the one before, moved just enough to keep the selected match in view.
 /// A list without rows starts at the selected match.
 fn list_offset(offset: usize, finder: &Finder, height: usize) -> usize {
-    let offset = offset.min(finder.matches.len().saturating_sub(1));
+    let offset = offset.min(finder.matches().len().saturating_sub(1));
 
-    if finder.selected < offset {
-        finder.selected
-    } else if finder.selected >= offset + height {
-        (finder.selected + 1).saturating_sub(height.max(1))
+    if finder.selected() < offset {
+        finder.selected()
+    } else if finder.selected() >= offset + height {
+        (finder.selected() + 1).saturating_sub(height.max(1))
     } else {
         offset
     }
@@ -107,11 +107,11 @@ fn draw_prompt_line(
     let prompt_width = line.width();
     // The count keeps its place after a space, the query scrolls in what is left
     let room = usize::from(area.width).saturating_sub(prompt_width + 1 + matches(finder).width());
-    let (query, column) = scroll(&finder.query, finder.cursor, room);
+    let (query, column) = scroll(finder.query(), finder.cursor(), room);
     let [line_area, count_area] = split(area, prompt_width + query.width().min(room));
     line.push_span(Span::raw(query));
 
-    frame.set_cursor_position((area.x + (prompt_width + column) as u16, area.y));
+    frame.set_cursor_position((area.x + saturating_u16(prompt_width + column), area.y));
     frame.render_widget(Paragraph::new(line), line_area);
     frame.render_widget(
         Paragraph::new(count(finder, theme, status, count_area.width)).right_aligned(),
@@ -121,7 +121,7 @@ fn draw_prompt_line(
 
 /// The first width columns of the line, and the rest after a space
 fn split(area: Rect, width: usize) -> [Rect; 2] {
-    let width = area.width.min(width as u16);
+    let width = area.width.min(saturating_u16(width));
     let rest = area.width.saturating_sub(width + 1);
 
     [
@@ -175,7 +175,7 @@ fn count(finder: &Finder, theme: &Theme, status: Option<&Status>, width: u16) ->
 }
 
 fn matches(finder: &Finder) -> String {
-    format!("{}/{}", finder.matches.len(), finder.commands.len())
+    format!("{}/{}", finder.matches().len(), finder.commands().len())
 }
 
 /// What every row starts with
@@ -188,7 +188,11 @@ struct RowLayout {
 
 impl RowLayout {
     fn new(finder: &Finder, prompt_width: Option<usize>, pane_width: u16) -> Self {
-        let time_width = if finder.has_times { TIME_WIDTH + 2 } else { 0 };
+        let time_width = if finder.has_times() {
+            TIME_WIDTH + 2
+        } else {
+            0
+        };
         let column = command_column(prompt_width, time_width);
 
         Self {
@@ -224,14 +228,14 @@ fn row<'a>(
     layout: &'a RowLayout,
     theme: &Theme,
 ) -> ListItem<'a> {
-    let command = &finder.commands[found.command_index];
+    let command = &finder.commands()[found.command_index];
     // The selected row has a style of its own across its width, the match drawn over it. Its
     // time and number of runs are not dimmed, dim colors are hard to read on its background.
     let dim = if selected { Style::new() } else { theme.dim };
     let fitted = layout.fit(command, &found.range);
     let mut spans = vec![Span::raw(layout.indent.as_str())];
 
-    if finder.has_times {
+    if finder.has_times() {
         let time = command.time.as_deref().unwrap_or_default();
         spans.push(Span::styled(format!("{time:<TIME_WIDTH$}  "), dim));
     }
@@ -281,8 +285,8 @@ fn preview<'a>(
     area: Rect,
     theme: &Theme,
 ) -> Option<Vec<Line<'a>>> {
-    let found = finder.matches.get(finder.selected)?;
-    let command = &finder.commands[found.command_index];
+    let found = finder.matches().get(finder.selected())?;
+    let command = &finder.commands()[found.command_index];
 
     if !layout.fit(command, &found.range).is_cut() {
         return None;
@@ -421,6 +425,11 @@ fn prefix_end(text: &str, start: usize, width: usize) -> usize {
     text.len()
 }
 
+/// Columns or rows as ratatui takes them, capped at `u16::MAX`
+fn saturating_u16(value: usize) -> u16 {
+    u16::try_from(value).unwrap_or(u16::MAX)
+}
+
 /// Where the end of text starts when it may take width columns
 fn suffix_start(text: &str, width: usize) -> usize {
     let mut used = 0;
@@ -543,33 +552,33 @@ mod tests {
     fn scrolls_the_list_only_to_keep_the_selection_in_view() {
         let mut finder = finder("ls 1\nls 2\nls 3\nls 4\nls 5\nls 6\n");
         let commands: Vec<String> = finder
-            .matches
+            .matches()
             .iter()
-            .map(|found| finder.commands[found.command_index].text.clone())
+            .map(|found| finder.commands()[found.command_index].text.clone())
             .collect();
         let offset = &mut 0;
 
         assert_eq!(listed(&finder, 4, offset), commands[0..3]);
 
-        finder.selected = 4;
+        finder.select(4);
         assert_eq!(listed(&finder, 4, offset), commands[2..5]);
 
         // Back up a row, still in view
-        finder.selected = 3;
+        finder.select(3);
         assert_eq!(listed(&finder, 4, offset), commands[2..5]);
 
-        finder.selected = 1;
+        finder.select(1);
         assert_eq!(listed(&finder, 4, offset), commands[1..4]);
     }
 
     #[test]
     fn draws_without_rows_for_the_list() {
         let mut finder = finder("ls 1\nls 2\n");
-        finder.selected = 1;
+        finder.select(1);
         let offset = &mut 0;
 
         // A pane of one row has only the prompt line
-        assert!(listed(&finder, 1, offset).is_empty());
+        assert_eq!(listed(&finder, 1, offset), Vec::<String>::new());
         assert_eq!(*offset, 1);
     }
 
@@ -866,7 +875,7 @@ mod tests {
 
         assert_eq!(row, "  …our five six seven eight nine; ls (2)");
         assert_eq!(
-            buffer[(row.find("ls").unwrap() as u16 - 2, 1)].fg,
+            buffer[(u16::try_from(row.find("ls").unwrap()).unwrap() - 2, 1)].fg,
             Color::Yellow
         );
         assert!((0..40).all(|x| buffer[(x, 1)].bg == Color::Indexed(238)));

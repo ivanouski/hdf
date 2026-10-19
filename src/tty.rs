@@ -56,7 +56,8 @@ pub fn watch_signals() -> io::Result<Arc<AtomicUsize>> {
     let signal = Arc::new(AtomicUsize::new(0));
 
     for number in [SIGINT, SIGTERM, SIGHUP] {
-        signal_hook::flag::register_usize(number, Arc::clone(&signal), number as usize)?;
+        let value = usize::try_from(number).map_err(io::Error::other)?;
+        signal_hook::flag::register_usize(number, Arc::clone(&signal), value)?;
     }
 
     exit_when_stuck(Arc::clone(&signal));
@@ -94,7 +95,7 @@ fn exit_when_stuck(signal: Arc<AtomicUsize>) {
 
 /// The exit status for a signal, as shells report it
 pub fn signal_status(signal: usize) -> u8 {
-    128 + signal as u8
+    u8::try_from(128 + signal).unwrap_or(u8::MAX)
 }
 
 /// The next terminal event, or None once a signal arrived

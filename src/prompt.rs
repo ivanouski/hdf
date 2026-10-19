@@ -200,7 +200,7 @@ fn number(code: &str) -> u16 {
     code.parse().unwrap_or(0)
 }
 
-/// The color after FG_EXTENDED or BG_EXTENDED, in its parts after colons or in the codes after it:
+/// The color after `FG_EXTENDED` or `BG_EXTENDED`, in its parts after colons or in the codes after it:
 /// an index of 256 colors, or red, green and blue. After colons a color space may come first.
 fn extended_color(parts: &[u16], params: &mut Split<char>) -> Option<Color> {
     let parts = if parts.is_empty() {

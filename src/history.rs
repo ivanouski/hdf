@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process;
 use std::str;
 
+#[derive(Debug)]
 pub struct Entry {
     /// The command as stored, without the newline that ends it
     pub original: String,

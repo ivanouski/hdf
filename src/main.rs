@@ -87,7 +87,7 @@ fn run() -> Result<ExitCode, String> {
             Ok(ExitCode::from(EDIT_STATUS))
         }
         Outcome::Quit if print_query => {
-            print_line(&finder.query)?;
+            print_line(finder.query())?;
             Ok(ExitCode::from(QUERY_STATUS))
         }
         Outcome::Quit => Ok(ExitCode::from(QUIT_STATUS)),

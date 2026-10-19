@@ -14,7 +14,7 @@ use serde::de::{self, Deserializer, MapAccess, Visitor};
 use crate::context::Context;
 
 /// The defaults as a config file, for --help and --init-config. A test keeps them the same as
-/// Theme::default.
+/// `Theme::default`.
 pub const DEFAULT: &str = r#"[colors]
 prompt   = { fg = "blue", bold = true }
 count    = "dark-gray"     # matches/commands
@@ -26,7 +26,7 @@ selected = { bg = "238" }  # the selected row, under the match
 "#;
 
 /// The config file, every key optional
-#[derive(Default, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     pub colors: Theme,
@@ -117,7 +117,7 @@ impl Config {
     }
 }
 
-/// A relative XDG_CONFIG_HOME is invalid, the XDG spec says to ignore it
+/// A relative `XDG_CONFIG_HOME` is invalid, the XDG spec says to ignore it
 fn path() -> Option<PathBuf> {
     env::var_os("XDG_CONFIG_HOME")
         .filter(|dir| Path::new(dir).is_absolute())

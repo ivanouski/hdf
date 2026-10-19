@@ -211,7 +211,7 @@ mod tests {
             (KeyCode::Char('p'), CONTROL, 0),
         ] {
             session.edit(code, modifiers);
-            assert_eq!(session.finder.selected, selected);
+            assert_eq!(session.finder.selected(), selected);
         }
     }
 
@@ -226,7 +226,7 @@ mod tests {
             (KeyCode::PageUp, 0),
         ] {
             session.edit(code, NONE);
-            assert_eq!(session.finder.selected, selected);
+            assert_eq!(session.finder.selected(), selected);
         }
     }
 
@@ -236,13 +236,13 @@ mod tests {
 
         session.edit(KeyCode::Char('e'), NONE);
         session.edit(KeyCode::Char('C'), KeyModifiers::SHIFT);
-        assert_eq!(session.finder.query, "eC");
+        assert_eq!(session.finder.query(), "eC");
 
         session.edit(KeyCode::Backspace, NONE);
-        assert_eq!(session.finder.query, "e");
+        assert_eq!(session.finder.query(), "e");
 
         session.edit(KeyCode::Char('u'), CONTROL);
-        assert_eq!(session.finder.query, "");
+        assert_eq!(session.finder.query(), "");
     }
 
     #[test]
@@ -269,7 +269,7 @@ mod tests {
         ] {
             session.edit(code, modifiers);
             assert_eq!(
-                (session.finder.query.as_str(), session.finder.cursor),
+                (session.finder.query(), session.finder.cursor()),
                 (query, cursor)
             );
         }
@@ -295,7 +295,7 @@ mod tests {
         ] {
             session.edit(code, modifiers);
             assert_eq!(
-                (session.finder.query.as_str(), session.finder.cursor),
+                (session.finder.query(), session.finder.cursor()),
                 (query, cursor)
             );
         }
@@ -308,7 +308,7 @@ mod tests {
         session.edit(KeyCode::Char('x'), ALT);
         session.edit(KeyCode::Char('x'), CONTROL);
 
-        assert_eq!(session.finder.query, "");
+        assert_eq!(session.finder.query(), "");
     }
 
     #[test]

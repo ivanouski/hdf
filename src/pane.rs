@@ -78,7 +78,10 @@ impl Pane {
         let (kept, cursor) = if self.column > 0 {
             (0, Position::new(self.column, area.y.saturating_sub(1)))
         } else {
-            (kept.min(usize::from(area.width)) as u16, area.as_position())
+            (
+                u16::try_from(kept).unwrap_or(u16::MAX).min(area.width),
+                area.as_position(),
+            )
         };
         let backend = self.terminal.backend_mut();
         backend.set_cursor_position(Position::new(kept, area.y))?;
