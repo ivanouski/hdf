@@ -43,7 +43,9 @@ class HdfTestCase < Minitest::Test
     FileUtils.remove_entry(@tmp_dir)
   end
 
-  PANE_TOP = %r{ {2,}(\d+/\d+|deleted .*|cannot .*)\z}
+  DIVIDER_ROW = 1
+  FIRST_ROW = 2
+  PANE_DIVIDER = %r{\A─* ?(\d+/\d+|deleted .*|cannot .*) ──\z}
 
   private
 
@@ -74,21 +76,22 @@ class HdfTestCase < Minitest::Test
   end
 
   def wait_for_hdf_in_bash(query = '')
-    @session.wait_for { |lines| lines.any? { |line| line.match?(%r{\A\$ #{Regexp.escape(query)} +\d+/\d+\z}) } }
+    prompt = "$ #{query}".rstrip
+    @session.wait_for { |lines| lines.each_cons(2).any? { |line, below| line == prompt && below.match?(PANE_DIVIDER) } }
     sleep(0.05)
   end
 
   def wait_for_pane
-    @session.wait_for { |lines| lines.any? { |line| line.start_with?('> ') } }
+    @session.wait_for { |lines| lines.any? { |line| line.match?(PANE_DIVIDER) } }
     sleep(0.05)
   end
 
   def pane
     lines = @session.screen
-    top = lines.index { |line| line.match?(PANE_TOP) }
-    prompt = lines[top].sub(PANE_TOP, '')
+    divider = lines.index { |line| line.match?(PANE_DIVIDER) }
+    flunk("no pane under a prompt line:\n#{lines.join("\n")}") unless divider&.positive?
 
-    [prompt, *lines[(top + 1)..].take_while { |line| !line.empty? }.map(&:strip)]
+    [lines[divider - 1], *lines[(divider + 1)..].take_while { |line| !line.empty? }.map(&:strip)]
   end
 
   def picked_output(*keys)

@@ -42,7 +42,7 @@ class HdfHistoryFileTest < HdfTestCase
     delete
 
     assert_equal "#{HISTORY.sub("tmux -CC\n", '')}echo from another shell\n", File.read(@history)
-    assert_match(%r{ 0/15\z}, @session.screen.first.sub('deleted tmux -CC', '0/15'))
+    assert_match(%r{ 0/15 ──\z}, @session.screen[DIVIDER_ROW].sub('deleted tmux -CC', '0/15'))
   end
 
   def test_refuses_to_write_a_file_rewritten_while_open
@@ -52,7 +52,7 @@ class HdfHistoryFileTest < HdfTestCase
     @session.press(:ctrl_d)
     @session.wait_for_text('cannot delete')
 
-    assert_includes @session.screen.first, 'cannot delete: history file was changed by another process'
+    assert_includes @session.screen[DIVIDER_ROW], 'cannot delete: history file was changed by another process'
     assert_equal ['>', 'rewritten'], pane
     assert_equal "rewritten\n", File.read(@history)
   end

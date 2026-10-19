@@ -89,7 +89,7 @@ class HdfrcTest < HdfTestCase
 
     @session.type('pick')
     @session.press(:up)
-    @session.wait_for { |lines| lines.first.match?(%r{\Abox\$ pick +1/2\z}) }
+    @session.wait_for { |lines| lines.first == 'box$ pick' && lines[DIVIDER_ROW].end_with?(' 1/2 ──') }
 
     assert_color '38;5;5'
     refute_includes @session.output.partition("\e[6n").last, 'title'
@@ -101,9 +101,11 @@ class HdfrcTest < HdfTestCase
 
     @session.type('echo')
     @session.press(:up)
-    @session.wait_for { |lines| lines.first.match?(%r{\A\[mon@Aer ~/src/utils \(main\)\]\$ echo +2/2\z}) }
+    @session.wait_for do |lines|
+      lines.first == '[mon@Aer ~/src/utils (main)]$ echo' && lines[DIVIDER_ROW].end_with?(' 2/2 ──')
+    end
 
-    assert_equal "#{' ' * 12}2023-11-14 22:13  echo picked", @session.screen[1]
+    assert_equal "#{' ' * 12}2023-11-14 22:13  echo picked", @session.screen[FIRST_ROW]
   end
 
   def test_ctrl_p_and_ctrl_n_browse_history_as_usual

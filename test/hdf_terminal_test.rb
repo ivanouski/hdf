@@ -62,7 +62,8 @@ class HdfTerminalTest < HdfTestCase
   def test_fits_a_short_terminal
     start('', rows: 4)
 
-    assert_equal 4, pane.size
+    # The prompt line and two commands
+    assert_equal 3, pane.size
     assert_picks(:enter, 'gg')
   end
 end

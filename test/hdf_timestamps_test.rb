@@ -21,7 +21,7 @@ class HdfTimestampsTest < HdfTestCase
     File.write(@history, "ls\n#1700000000\npwd\n")
     start
 
-    assert_equal '                    ls', @session.screen[2]
+    assert_equal '                    ls', @session.screen[FIRST_ROW + 1]
   end
 
   def test_takes_the_time_from_the_latest_timestamped_run

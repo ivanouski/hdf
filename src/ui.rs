@@ -1,4 +1,4 @@
-//! Drawing the finder: the prompt line, the list and the preview
+//! Drawing the finder: the prompt line, the divider, the list and the preview
 
 use std::ops::Range;
 
@@ -25,6 +25,9 @@ const NO_COMMANDS: &str = "no commands";
 const PREVIEW_LINES: usize = 3;
 /// Kept for the list when the preview takes rows from it
 const MIN_LIST_ROWS: usize = 3;
+const DASH: &str = "─";
+/// After the count
+const COUNT_END: &str = " ──";
 
 /// The outcome of the last Ctrl-D, shown in place of the count until the next key
 #[derive(Debug, PartialEq)]
@@ -46,15 +49,21 @@ pub fn draw(
     let area = frame.area();
     let shell_prompt = shell_prompt(prompt, area.width);
     let layout = RowLayout::new(finder, shell_prompt.map(Line::width), area.width);
-    let preview = preview(finder, &layout, area, theme).unwrap_or_default();
-    let [prompt_area, list_area, preview_area] = Layout::vertical([
+    let [prompt_area, divider_area, body] = Layout::vertical([
         Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Fill(1),
+    ])
+    .areas(area);
+    let preview = preview(finder, &layout, body, theme).unwrap_or_default();
+    let [list_area, preview_area] = Layout::vertical([
         Constraint::Fill(1),
         Constraint::Length(saturating_u16(preview.len())),
     ])
-    .areas(area);
+    .areas(body);
 
-    draw_prompt_line(frame, prompt_area, shell_prompt, finder, theme, status);
+    draw_prompt_line(frame, prompt_area, shell_prompt, finder, theme);
+    draw_divider(frame, divider_area, finder, theme, status);
     let height = draw_list(frame, list_area, finder, &layout, theme, offset);
     frame.render_widget(Paragraph::new(preview), preview_area);
 
@@ -122,39 +131,54 @@ fn draw_prompt_line(
     shell_prompt: Option<&Line>,
     finder: &Finder,
     theme: &Theme,
-    status: Option<&Status>,
 ) {
     let mut line = shell_prompt
         .cloned()
         .unwrap_or_else(|| Line::from(Span::styled("> ", theme.prompt)));
     let prompt_width = line.width();
-    // The count keeps its place after a space, the query scrolls in what is left
-    let room = usize::from(area.width).saturating_sub(prompt_width + 1 + matches(finder).width());
+    let room = usize::from(area.width).saturating_sub(prompt_width);
     let (query, column) = scroll(finder.query(), finder.cursor(), room);
-    let [line_area, count_area] = split(area, prompt_width + query.width().min(room));
     line.push_span(Span::raw(query));
 
     frame.set_cursor_position((area.x + saturating_u16(prompt_width + column), area.y));
-    frame.render_widget(Paragraph::new(line), line_area);
-    frame.render_widget(
-        Paragraph::new(count(finder, theme, status, count_area.width)).right_aligned(),
-        count_area,
-    );
+    frame.render_widget(Paragraph::new(line), area);
 }
 
-/// The first width columns of the line, and the rest after a space
-fn split(area: Rect, width: usize) -> [Rect; 2] {
-    let width = area.width.min(saturating_u16(width));
-    let rest = area.width.saturating_sub(width + 1);
+/// Dashes with the count near the right end, only dashes when it doesn't fit
+fn draw_divider(
+    frame: &mut Frame,
+    area: Rect,
+    finder: &Finder,
+    theme: &Theme,
+    status: Option<&Status>,
+) {
+    let width = usize::from(area.width);
+    let room = width.saturating_sub(" ".width() + COUNT_END.width());
+    let (text, style) = count(finder, theme, status);
+    // A cut count would read as other numbers, a cut status still tells what happened
+    let text = match status {
+        Some(_) => cut(&text, room),
+        None if text.width() <= room => text,
+        None => String::new(),
+    };
 
-    [
-        Rect { width, ..area },
-        Rect {
-            x: area.right() - rest,
-            width: rest,
-            ..area
-        },
-    ]
+    let line = if text.is_empty() {
+        dashes(width, theme)
+    } else {
+        let before = DASH.repeat(room.saturating_sub(text.width()));
+
+        Line::from(vec![
+            Span::styled(format!("{before} "), theme.dim),
+            Span::styled(text, style),
+            Span::styled(COUNT_END, theme.dim),
+        ])
+    };
+
+    frame.render_widget(Paragraph::new(line), area);
+}
+
+fn dashes(width: usize, theme: &Theme) -> Line<'static> {
+    Line::styled(DASH.repeat(width), theme.dim)
 }
 
 /// The query as room columns show it, and the column of the cursor in it. A cursor past the room
@@ -185,18 +209,22 @@ fn cut(text: &str, width: usize) -> String {
     }
 }
 
-/// Matches and commands, or the status in their place until the next key, cut to width
-fn count(finder: &Finder, theme: &Theme, status: Option<&Status>, width: u16) -> Span<'static> {
-    let matches = matches(finder);
-    let (text, style) = match status {
-        Some(Status::Deleted(message)) => (message.as_str(), theme.deleted),
-        Some(Status::Failed(message)) => (message.as_str(), theme.error),
-        // No matches in the color of an error, so the pane doesn't pass for the shell's prompt
-        None if finder.matches().is_empty() => (matches.as_str(), theme.error),
-        None => (matches.as_str(), theme.count),
-    };
+/// Matches and commands, or the status in their place until the next key
+fn count(finder: &Finder, theme: &Theme, status: Option<&Status>) -> (String, Style) {
+    match status {
+        Some(Status::Deleted(message)) => (message.clone(), theme.deleted),
+        Some(Status::Failed(message)) => (message.clone(), theme.error),
+        None => {
+            let text = format!("{}/{}", finder.matches().len(), finder.commands().len());
+            let style = if finder.matches().is_empty() {
+                theme.error
+            } else {
+                theme.count
+            };
 
-    Span::styled(cut(text, width.into()), style)
+            (text, style)
+        }
+    }
 }
 
 /// In place of the list when nothing matches, where the commands would start
@@ -212,10 +240,6 @@ fn nothing_found(finder: &Finder, layout: &RowLayout, theme: &Theme) -> Line<'st
         Span::raw(" ".repeat(layout.indent.len() + time_width)),
         Span::styled(text, theme.dim),
     ])
-}
-
-fn matches(finder: &Finder) -> String {
-    format!("{}/{}", finder.matches().len(), finder.commands().len())
 }
 
 /// What every row starts with
@@ -333,7 +357,7 @@ fn preview<'a>(
     let cut = lines.len() > PREVIEW_LINES;
     lines.truncate(PREVIEW_LINES);
 
-    if usize::from(area.height) < 1 + MIN_LIST_ROWS + 1 + lines.len() {
+    if usize::from(area.height) < MIN_LIST_ROWS + 1 + lines.len() {
         return None;
     }
 
@@ -341,7 +365,7 @@ fn preview<'a>(
         last.end = prefix_end(&command.text, last.start, width.saturating_sub(1));
     }
 
-    let divider = Line::styled("─".repeat(width), theme.dim);
+    let divider = dashes(width, theme);
     let mut preview: Vec<Line> = lines
         .into_iter()
         .map(|shown| Line::from_iter(highlight(&command.text, &found.range, shown, theme.matched)))
@@ -492,70 +516,119 @@ mod tests {
     use super::*;
     use crate::{history, prompt};
 
+    const DIVIDER_ROW: u16 = 1;
+    const FIRST_ROW: u16 = 2;
+
     fn finder(content: &str) -> Finder {
         Finder::new(&history::parse(content.as_bytes()), "ls".to_string())
     }
 
-    fn render(finder: &Finder, theme: &Theme) -> Buffer {
-        render_with_prompt(finder, theme, None, 40)
+    /// The cursor at the end of the query, or at its start for home
+    fn query_finder(query: &str, home: bool) -> Finder {
+        let mut finder = Finder::new(&history::parse(b"ls\n"), query.to_string());
+        if home {
+            finder.home();
+        }
+
+        finder
     }
 
-    fn render_with_prompt(
-        finder: &Finder,
-        theme: &Theme,
-        prompt: Option<&str>,
-        width: u16,
-    ) -> Buffer {
-        render_sized(finder, theme, prompt, width, 4)
-    }
-
-    fn render_sized(
-        finder: &Finder,
-        theme: &Theme,
-        prompt: Option<&str>,
-        width: u16,
-        height: u16,
-    ) -> Buffer {
-        render_paged(finder, theme, prompt, width, height).0
-    }
-
-    /// The rendered pane and the rows draw gives for PgUp and PgDn
-    fn render_paged(
-        finder: &Finder,
-        theme: &Theme,
-        prompt: Option<&str>,
+    /// Draws on a 40 by 4 terminal unless set otherwise
+    struct Render<'a> {
+        finder: &'a Finder,
+        theme: Theme,
+        prompt: Option<&'a str>,
+        status: Option<Status>,
         width: u16,
         height: u16,
-    ) -> (Buffer, usize) {
-        let prompt = prompt.map(prompt::parse);
-        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-        let mut page = 0;
-        terminal
-            .draw(|frame| {
-                page = draw(frame, finder, theme, prompt.as_ref(), None, &mut 0);
-            })
-            .unwrap();
+        offset: usize,
+    }
 
-        (terminal.backend().buffer().clone(), page)
+    struct Rendered {
+        buffer: Buffer,
+        cursor: Position,
+        page: usize,
+        offset: usize,
+    }
+
+    impl<'a> Render<'a> {
+        fn new(finder: &'a Finder) -> Self {
+            Self {
+                finder,
+                theme: Theme::default(),
+                prompt: None,
+                status: None,
+                width: 40,
+                height: 4,
+                offset: 0,
+            }
+        }
+
+        fn theme(self, theme: Theme) -> Self {
+            Self { theme, ..self }
+        }
+
+        fn prompt(self, prompt: &'a str) -> Self {
+            Self {
+                prompt: Some(prompt),
+                ..self
+            }
+        }
+
+        fn status(self, status: Status) -> Self {
+            Self {
+                status: Some(status),
+                ..self
+            }
+        }
+
+        fn width(self, width: u16) -> Self {
+            Self { width, ..self }
+        }
+
+        fn height(self, height: u16) -> Self {
+            Self { height, ..self }
+        }
+
+        fn offset(self, offset: usize) -> Self {
+            Self { offset, ..self }
+        }
+
+        fn run(self) -> Rendered {
+            let prompt = self.prompt.map(prompt::parse);
+            let mut terminal = Terminal::new(TestBackend::new(self.width, self.height)).unwrap();
+            let mut offset = self.offset;
+            let mut page = 0;
+            terminal
+                .draw(|frame| {
+                    page = draw(
+                        frame,
+                        self.finder,
+                        &self.theme,
+                        prompt.as_ref(),
+                        self.status.as_ref(),
+                        &mut offset,
+                    );
+                })
+                .unwrap();
+
+            Rendered {
+                buffer: terminal.backend().buffer().clone(),
+                cursor: terminal.get_cursor_position().unwrap(),
+                page,
+                offset,
+            }
+        }
     }
 
     /// The commands on the rows of the list, with the offset kept from the draws before
     fn listed(finder: &Finder, height: u16, offset: &mut usize) -> Vec<String> {
-        let mut terminal = Terminal::new(TestBackend::new(40, height)).unwrap();
-        terminal
-            .draw(|frame| {
-                draw(frame, finder, &Theme::default(), None, None, offset);
-            })
-            .unwrap();
-        let buffer = terminal.backend().buffer();
+        let rendered = Render::new(finder).height(height).offset(*offset).run();
+        *offset = rendered.offset;
 
-        (1..height)
-            .map(|y| text(buffer, y).trim().to_string())
+        (FIRST_ROW..height)
+            .map(|y| text(&rendered.buffer, y).trim().to_string())
             .collect()
-    }
-
-    fn page(finder: &Finder, height: u16) -> usize {
-        render_paged(finder, &Theme::default(), None, 40, height).1
     }
 
     fn text(buffer: &Buffer, y: u16) -> String {
@@ -566,7 +639,7 @@ mod tests {
 
     /// The column of the first command, on the selected row
     fn first_command_column(buffer: &Buffer) -> usize {
-        text(buffer, 1).find("ls").unwrap()
+        text(buffer, FIRST_ROW).find("ls").unwrap()
     }
 
     /// The match is at 20 and 21, after the indent, the time and two spaces
@@ -574,8 +647,8 @@ mod tests {
 
     #[test]
     fn shows_the_selected_row_on_its_background_with_the_match_over_it() {
-        let buffer = render(&finder(HISTORY), &Theme::default());
-        let cell = |x| &buffer[(x, 1)];
+        let buffer = Render::new(&finder(HISTORY)).run().buffer;
+        let cell = |x| &buffer[(x, FIRST_ROW)];
 
         assert!((0..40).all(|x| cell(x).bg == Color::Indexed(238)));
         assert!((20..22).all(|x| cell(x).fg == Color::Yellow));
@@ -594,17 +667,17 @@ mod tests {
             .collect();
         let offset = &mut 0;
 
-        assert_eq!(listed(&finder, 4, offset), commands[0..3]);
+        assert_eq!(listed(&finder, 5, offset), commands[0..3]);
 
         finder.select(4);
-        assert_eq!(listed(&finder, 4, offset), commands[2..5]);
+        assert_eq!(listed(&finder, 5, offset), commands[2..5]);
 
         // Back up a row, still in view
         finder.select(3);
-        assert_eq!(listed(&finder, 4, offset), commands[2..5]);
+        assert_eq!(listed(&finder, 5, offset), commands[2..5]);
 
         finder.select(1);
-        assert_eq!(listed(&finder, 4, offset), commands[1..4]);
+        assert_eq!(listed(&finder, 5, offset), commands[1..4]);
     }
 
     #[test]
@@ -613,8 +686,7 @@ mod tests {
         finder.select(1);
         let offset = &mut 0;
 
-        // A pane of one row has only the prompt line
-        assert_eq!(listed(&finder, 1, offset), Vec::<String>::new());
+        assert_eq!(listed(&finder, 2, offset), Vec::<String>::new());
         assert_eq!(*offset, 1);
     }
 
@@ -622,28 +694,28 @@ mod tests {
     fn says_so_where_the_commands_would_start_when_nothing_matches() {
         let finder = Finder::new(&history::parse(HISTORY.as_bytes()), "pwd".to_string());
         let theme = Theme::default();
-        let buffer = render(&finder, &theme);
+        let buffer = Render::new(&finder).run().buffer;
 
         assert_eq!(
-            text(&buffer, 1).trim_end(),
+            text(&buffer, FIRST_ROW).trim_end(),
             format!("{}no matches", " ".repeat(20))
         );
-        assert_eq!(buffer[(20, 1)].fg, Color::DarkGray);
-        assert!(text(&buffer, 0).ends_with(" 0/2"));
-        assert_eq!(buffer[(39, 0)].fg, theme.error.fg.unwrap());
+        assert_eq!(buffer[(20, FIRST_ROW)].fg, Color::DarkGray);
+        assert!(text(&buffer, DIVIDER_ROW).ends_with(" 0/2 ──"));
+        assert_eq!(buffer[(34, DIVIDER_ROW)].fg, theme.error.fg.unwrap());
     }
 
     #[test]
     fn says_there_are_no_commands_for_an_empty_history() {
-        let buffer = render_with_prompt(&finder(""), &Theme::default(), Some("$ "), 40);
+        let buffer = Render::new(&finder("")).prompt("$ ").run().buffer;
 
-        assert_eq!(text(&buffer, 1).trim_end(), "  no commands");
+        assert_eq!(text(&buffer, FIRST_ROW).trim_end(), "  no commands");
     }
 
     #[test]
     fn dims_the_times_of_other_rows() {
-        let buffer = render(&finder(HISTORY), &Theme::default());
-        let cell = |x| &buffer[(x, 2)];
+        let buffer = Render::new(&finder(HISTORY)).run().buffer;
+        let cell = |x| &buffer[(x, FIRST_ROW + 1)];
 
         assert!((0..40).all(|x| cell(x).bg == Color::Reset));
         assert!((2..18).all(|x| cell(x).fg == Color::DarkGray));
@@ -661,24 +733,27 @@ mod tests {
             selected: Style::new().bg(Color::Blue),
             ..Theme::default()
         };
-        let buffer = render(&finder(HISTORY), &theme);
+        let buffer = Render::new(&finder(HISTORY)).theme(theme).run().buffer;
 
         assert_eq!(buffer[(0, 0)].fg, Color::Green);
-        assert_eq!(buffer[(39, 0)].fg, Color::Magenta);
-        assert_eq!(buffer[(0, 1)].bg, Color::Blue);
-        assert_eq!(buffer[(20, 1)].fg, Color::Red);
-        assert_eq!(buffer[(20, 1)].bg, Color::Blue);
-        assert_eq!(buffer[(2, 2)].fg, Color::Gray);
-        assert_eq!(buffer[(20, 2)].fg, Color::Red);
+        assert_eq!(buffer[(0, DIVIDER_ROW)].fg, Color::Gray);
+        assert_eq!(buffer[(34, DIVIDER_ROW)].fg, Color::Magenta);
+        assert_eq!(buffer[(0, FIRST_ROW)].bg, Color::Blue);
+        assert_eq!(buffer[(20, FIRST_ROW)].fg, Color::Red);
+        assert_eq!(buffer[(20, FIRST_ROW)].bg, Color::Blue);
+        assert_eq!(buffer[(2, FIRST_ROW + 1)].fg, Color::Gray);
+        assert_eq!(buffer[(20, FIRST_ROW + 1)].fg, Color::Red);
     }
 
     #[test]
     fn pads_the_time_column() {
-        let buffer = render(&finder("ls\n#1700000000\nls -la\n"), &Theme::default());
+        let buffer = Render::new(&finder("ls\n#1700000000\nls -la\n"))
+            .run()
+            .buffer;
 
         // The command after the time and two spaces, also where the time is blank
         assert_eq!(
-            text(&buffer, 2).find("ls").unwrap(),
+            text(&buffer, FIRST_ROW + 1).find("ls").unwrap(),
             first_command_column(&buffer)
         );
         assert_eq!(first_command_column(&buffer), 2 + TIME_COLUMN);
@@ -688,119 +763,129 @@ mod tests {
     fn puts_the_cursor_where_it_is_in_the_query() {
         let mut finder = finder("ls\n");
         finder.left();
-        let mut terminal = Terminal::new(TestBackend::new(40, 4)).unwrap();
-        terminal
-            .draw(|frame| {
-                draw(frame, &finder, &Theme::default(), None, None, &mut 0);
-            })
-            .unwrap();
 
-        assert_eq!(terminal.get_cursor_position().unwrap(), Position::new(3, 0));
+        assert_eq!(Render::new(&finder).run().cursor, Position::new(3, 0));
     }
 
-    fn render_query(query: &str, prompt: Option<&str>, home: bool) -> (Buffer, Position) {
-        render_query_with_status(query, prompt, home, None)
-    }
+    #[test]
+    fn keeps_the_prompt_line_in_a_pane_of_one_row() {
+        let Rendered { buffer, cursor, .. } = Render::new(&finder(HISTORY)).height(1).run();
 
-    fn render_query_with_status(
-        query: &str,
-        prompt: Option<&str>,
-        home: bool,
-        status: Option<&Status>,
-    ) -> (Buffer, Position) {
-        let mut finder = Finder::new(&history::parse(b"ls\n"), query.to_string());
-        if home {
-            finder.home();
-        }
-        let prompt = prompt.map(prompt::parse);
-        let mut terminal = Terminal::new(TestBackend::new(20, 4)).unwrap();
-        terminal
-            .draw(|frame| {
-                draw(
-                    frame,
-                    &finder,
-                    &Theme::default(),
-                    prompt.as_ref(),
-                    status,
-                    &mut 0,
-                );
-            })
-            .unwrap();
-        let cursor = terminal.get_cursor_position().unwrap();
-
-        (terminal.backend().buffer().clone(), cursor)
+        assert_eq!(text(&buffer, 0).trim_end(), "> ls");
+        assert_eq!(cursor, Position::new(4, 0));
     }
 
     #[test]
     fn scrolls_a_query_too_long_for_the_line_to_the_cursor() {
-        let (buffer, cursor) = render_query("0123456789abcdefghij", None, false);
+        let finder = query_finder("0123456789abcdefghij", false);
+        let Rendered { buffer, cursor, .. } = Render::new(&finder).width(20).run();
 
-        assert_eq!(text(&buffer, 0), "> …89abcdefghij  0/1");
-        assert_eq!(cursor, Position::new(15, 0));
+        assert_eq!(text(&buffer, 0), "> …456789abcdefghij ");
+        assert_eq!(cursor, Position::new(19, 0));
     }
 
     #[test]
     fn keeps_the_start_of_a_long_query_while_the_cursor_fits() {
-        let (buffer, cursor) = render_query("0123456789abcdefghij", None, true);
+        let finder = query_finder("0123456789abcdefghij", true);
+        let Rendered { buffer, cursor, .. } = Render::new(&finder).width(20).run();
 
-        assert_eq!(text(&buffer, 0), "> 0123456789abcd 0/1");
+        assert_eq!(text(&buffer, 0), "> 0123456789abcdefgh");
         assert_eq!(cursor, Position::new(2, 0));
     }
 
     #[test]
     fn scrolls_a_long_query_after_the_shell_prompt() {
-        let (buffer, cursor) = render_query("0123456789abcdefghij", Some("dir$ "), false);
+        let finder = query_finder("0123456789abcdefghij", false);
+        let Rendered { buffer, cursor, .. } = Render::new(&finder).prompt("dir$ ").width(20).run();
 
-        assert_eq!(text(&buffer, 0), "dir$ …bcdefghij  0/1");
-        assert_eq!(cursor, Position::new(15, 0));
+        assert_eq!(text(&buffer, 0), "dir$ …789abcdefghij ");
+        assert_eq!(cursor, Position::new(19, 0));
     }
 
     #[test]
     fn scrolls_wide_characters_whole() {
-        let (buffer, cursor) = render_query("日本語のコマンドを検索する", None, false);
+        let finder = query_finder("日本語のコマンドを検索する", false);
+        let Rendered { buffer, cursor, .. } = Render::new(&finder).width(20).run();
 
-        assert_eq!(text(&buffer, 0), "> …ド を 検 索 す る   0/1");
-        assert_eq!(cursor, Position::new(15, 0));
+        assert_eq!(text(&buffer, 0), "> …マ ン ド を 検 索 す る  ");
+        assert_eq!(cursor, Position::new(19, 0));
+    }
+
+    #[test]
+    fn shows_the_count_in_the_divider_under_the_prompt_line() {
+        let buffer = Render::new(&finder(HISTORY)).run().buffer;
+
+        assert_eq!(text(&buffer, 0).trim_end(), "> ls");
+        assert_eq!(
+            text(&buffer, DIVIDER_ROW),
+            format!("{} 2/2 ──", DASH.repeat(33))
+        );
+        assert!(
+            (0..34)
+                .chain(37..40)
+                .all(|x| buffer[(x, DIVIDER_ROW)].fg == Color::DarkGray)
+        );
     }
 
     #[test]
     fn keeps_the_count_in_its_color_after_a_long_query() {
-        let (buffer, _) = render_query("0123456789abcdefghij", None, false);
+        let finder = query_finder("0123456789abcdefghij", false);
+        let buffer = Render::new(&finder).width(20).run().buffer;
         let theme = Theme::default();
 
-        for x in 3..15 {
-            assert_eq!(buffer[(x, 0)].fg, Color::Reset);
-        }
+        assert_eq!(
+            text(&buffer, DIVIDER_ROW),
+            format!("{} 0/1 ──", DASH.repeat(13))
+        );
         // Nothing matches the query, so the count is in the error color
-        for x in 17..20 {
-            assert_eq!(buffer[(x, 0)].fg, theme.error.fg.unwrap());
+        for x in 14..17 {
+            assert_eq!(buffer[(x, DIVIDER_ROW)].fg, theme.error.fg.unwrap());
         }
     }
 
     #[test]
-    fn cuts_the_status_to_the_room_the_query_leaves() {
+    fn cuts_the_status_to_the_divider() {
+        let finder = query_finder("0123456789", false);
         let status = Status::Deleted("deleted git commit".to_string());
-        let (buffer, cursor) = render_query_with_status("0123456789", None, false, Some(&status));
+        let Rendered { buffer, cursor, .. } = Render::new(&finder).width(20).status(status).run();
 
-        assert_eq!(text(&buffer, 0), "> 0123456789 delete…");
+        assert_eq!(text(&buffer, 0).trim_end(), "> 0123456789");
+        assert_eq!(text(&buffer, DIVIDER_ROW), " deleted git com… ──");
         assert_eq!(cursor, Position::new(12, 0));
+    }
+
+    #[test]
+    fn shows_only_dashes_in_a_divider_too_narrow_for_the_count() {
+        let finder = finder(HISTORY);
+
+        for width in [4, 6] {
+            let buffer = Render::new(&finder).width(width).run().buffer;
+
+            assert_eq!(
+                text(&buffer, DIVIDER_ROW),
+                DASH.repeat(width.into()),
+                "{width}"
+            );
+        }
+
+        let buffer = Render::new(&finder).width(7).run().buffer;
+        assert_eq!(text(&buffer, DIVIDER_ROW), " 2/2 ──");
     }
 
     #[test]
     fn shows_the_shell_prompt_in_its_colors_before_the_query() {
         let prompt = "\x01\x1b[35m\x02dir\x01\x1b[0m\x02$ ";
-        let buffer = render_with_prompt(&finder("ls\n"), &Theme::default(), Some(prompt), 40);
+        let buffer = Render::new(&finder("ls\n")).prompt(prompt).run().buffer;
 
-        assert!(text(&buffer, 0).starts_with("dir$ ls "));
+        assert_eq!(text(&buffer, 0).trim_end(), "dir$ ls");
         assert_eq!(buffer[(0, 0)].fg, Color::Magenta);
         assert_eq!(buffer[(3, 0)].fg, Color::Reset);
-        assert!(text(&buffer, 0).ends_with("1/1"));
     }
 
     #[test]
     fn shows_the_arrow_for_a_prompt_with_nothing_to_show() {
         let prompt = "\x01\x1b]0;title\x07\x02";
-        let buffer = render_with_prompt(&finder("ls\n"), &Theme::default(), Some(prompt), 40);
+        let buffer = Render::new(&finder("ls\n")).prompt(prompt).run().buffer;
 
         assert!(text(&buffer, 0).starts_with("> ls "));
         assert_eq!(first_command_column(&buffer), 2);
@@ -809,15 +894,22 @@ mod tests {
     #[test]
     fn lines_the_commands_up_under_the_query_with_the_times_before_them() {
         let prompt = "[mon@Aer ~/src/utils (main)]$ ";
-        let buffer = render_with_prompt(&finder(HISTORY), &Theme::default(), Some(prompt), 120);
+        let buffer = Render::new(&finder(HISTORY))
+            .prompt(prompt)
+            .width(120)
+            .run()
+            .buffer;
 
         assert_eq!(first_command_column(&buffer), prompt.len());
         assert_eq!(
-            text(&buffer, 1).find("20").unwrap(),
+            text(&buffer, FIRST_ROW).find("20").unwrap(),
             prompt.len() - 2 - TIME_WIDTH
         );
-        assert_eq!(text(&buffer, 2).find("ls").unwrap(), prompt.len());
-        assert!((0..120).all(|x| buffer[(x, 1)].bg == Color::Indexed(238)));
+        assert_eq!(
+            text(&buffer, FIRST_ROW + 1).find("ls").unwrap(),
+            prompt.len()
+        );
+        assert!((0..120).all(|x| buffer[(x, FIRST_ROW)].bg == Color::Indexed(238)));
     }
 
     #[test]
@@ -842,11 +934,14 @@ mod tests {
     #[test]
     fn shows_the_arrow_for_a_prompt_wider_than_60_percent_of_the_pane() {
         let finder = finder("ls\n");
-        let theme = Theme::default();
-        let kept = render_with_prompt(&finder, &theme, Some(&format!("{}$ ", "d".repeat(22))), 40);
-        let wide = render_with_prompt(&finder, &theme, Some(&format!("{}$ ", "d".repeat(23))), 40);
+        let (kept_prompt, wide_prompt) = (
+            format!("{}$ ", "d".repeat(22)),
+            format!("{}$ ", "d".repeat(23)),
+        );
+        let kept = Render::new(&finder).prompt(&kept_prompt).run().buffer;
+        let wide = Render::new(&finder).prompt(&wide_prompt).run().buffer;
 
-        assert!(text(&kept, 0).starts_with(&format!("{}$ ls ", "d".repeat(22))));
+        assert!(text(&kept, 0).starts_with(&format!("{kept_prompt}ls ")));
         assert_eq!(first_command_column(&kept), 24);
         assert!(text(&wide, 0).starts_with("> ls "));
         assert_eq!(first_command_column(&wide), INDENT);
@@ -923,54 +1018,60 @@ mod tests {
 
     #[test]
     fn shows_the_match_of_a_long_row_with_the_number_of_runs() {
-        let buffer = render_sized(&finder(LONG), &Theme::default(), None, 40, 4);
-        let row = text(&buffer, 1);
+        let buffer = Render::new(&finder(LONG)).run().buffer;
+        let row = text(&buffer, FIRST_ROW);
 
         assert_eq!(row, "  …our five six seven eight nine; ls (2)");
         assert_eq!(
-            buffer[(u16::try_from(row.find("ls").unwrap()).unwrap() - 2, 1)].fg,
+            buffer[(
+                u16::try_from(row.find("ls").unwrap()).unwrap() - 2,
+                FIRST_ROW
+            )]
+                .fg,
             Color::Yellow
         );
-        assert!((0..40).all(|x| buffer[(x, 1)].bg == Color::Indexed(238)));
+        assert!((0..40).all(|x| buffer[(x, FIRST_ROW)].bg == Color::Indexed(238)));
     }
 
     #[test]
     fn previews_the_selected_command_when_its_row_is_cut() {
-        let buffer = render_sized(&finder(LONG), &Theme::default(), None, 40, 8);
+        let buffer = Render::new(&finder(LONG)).height(8).run().buffer;
+        // Under three rows of the list
+        let divider = FIRST_ROW + 3;
 
-        assert_eq!(text(&buffer, 5), "─".repeat(40));
+        assert_eq!(text(&buffer, divider), DASH.repeat(40));
         assert_eq!(
-            text(&buffer, 6).trim_end(),
+            text(&buffer, divider + 1).trim_end(),
             "echo one two three four five six seven"
         );
-        assert_eq!(text(&buffer, 7).trim_end(), "eight nine; ls");
-        assert_eq!(buffer[(12, 7)].fg, Color::Yellow);
+        assert_eq!(text(&buffer, divider + 2).trim_end(), "eight nine; ls");
+        assert_eq!(buffer[(12, divider + 2)].fg, Color::Yellow);
     }
 
     #[test]
     fn previews_nothing_for_a_row_that_fits() {
         let mut finder = finder(LONG);
         finder.down();
-        let buffer = render_sized(&finder, &Theme::default(), None, 40, 8);
+        let buffer = Render::new(&finder).height(8).run().buffer;
 
-        assert!(!(0..8).any(|y| text(&buffer, y).starts_with('─')));
+        assert!(!(FIRST_ROW..8).any(|y| text(&buffer, y).starts_with(DASH)));
     }
 
     #[test]
     fn previews_nothing_without_room_for_the_list() {
-        let buffer = render_sized(&finder(LONG), &Theme::default(), None, 40, 6);
+        let buffer = Render::new(&finder(LONG)).height(6).run().buffer;
 
-        assert!(!(0..6).any(|y| text(&buffer, y).starts_with('─')));
+        assert!(!(FIRST_ROW..6).any(|y| text(&buffer, y).starts_with(DASH)));
     }
 
     #[test]
     fn gives_the_list_rows_as_the_page_without_the_preview() {
         let mut finder = finder(LONG);
 
-        // The prompt line, the divider and two lines of preview leave 4 rows
-        assert_eq!(page(&finder, 8), 4);
+        // The prompt line, the two dividers and two lines of preview leave 3 rows
+        assert_eq!(Render::new(&finder).height(8).run().page, 3);
 
         finder.down();
-        assert_eq!(page(&finder, 8), 7);
+        assert_eq!(Render::new(&finder).height(8).run().page, 6);
     }
 }

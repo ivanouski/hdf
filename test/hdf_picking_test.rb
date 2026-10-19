@@ -49,7 +49,7 @@ class HdfPickingTest < HdfTestCase
   def test_page_down_moves_the_selection_by_the_rows_of_the_list
     start
 
-    assert_picks(:page_down, :down, :enter, 'tmux -CC')
+    assert_picks(:page_down, :down, :enter, 'sbx -V')
   end
 
   def test_page_up_moves_back_and_stops_at_the_first_match

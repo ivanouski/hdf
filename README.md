@@ -102,7 +102,7 @@ count    = "dark-gray"     # matches/commands
 deleted  = "green"         # the status after Ctrl-D
 error    = "red"           # Ctrl-D failed, the count of no matches
 match    = { fg = "yellow", bold = true }
-dim      = "dark-gray"     # times, numbers of runs, cuts, the divider
+dim      = "dark-gray"     # times, numbers of runs, cuts, the dividers
 selected = { bg = "238" }  # the selected row, under the match
 ```
 
