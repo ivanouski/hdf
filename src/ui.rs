@@ -14,6 +14,8 @@ use crate::finder::{Command, Finder, Match, TIME_WIDTH};
 
 /// Before the commands, or their times, when they do not line up under the query
 const INDENT: usize = 2;
+/// The time and the two spaces between it and the command
+const TIME_COLUMN: usize = TIME_WIDTH + 2;
 /// In place of the text cut from a command
 const ELLIPSIS: &str = "…";
 /// Most lines of the preview, the last one ending in … when the command needs more
@@ -188,11 +190,7 @@ struct RowLayout {
 
 impl RowLayout {
     fn new(finder: &Finder, prompt_width: Option<usize>, pane_width: u16) -> Self {
-        let time_width = if finder.has_times() {
-            TIME_WIDTH + 2
-        } else {
-            0
-        };
+        let time_width = if finder.has_times() { TIME_COLUMN } else { 0 };
         let column = command_column(prompt_width, time_width);
 
         Self {
@@ -623,7 +621,7 @@ mod tests {
             text(&buffer, 2).find("ls").unwrap(),
             first_command_column(&buffer)
         );
-        assert_eq!(first_command_column(&buffer), 2 + TIME_WIDTH + 2);
+        assert_eq!(first_command_column(&buffer), 2 + TIME_COLUMN);
     }
 
     #[test]
@@ -763,27 +761,21 @@ mod tests {
 
     #[test]
     fn starts_the_commands_under_the_query_after_a_shell_prompt() {
-        assert_eq!(command_column(Some(30), TIME_WIDTH + 2), 30);
-        assert_eq!(command_column(Some(18), TIME_WIDTH + 2), 18);
+        assert_eq!(command_column(Some(30), TIME_COLUMN), 30);
+        assert_eq!(command_column(Some(18), TIME_COLUMN), 18);
         // Without times the gutter is blank
         assert_eq!(command_column(Some(13), 0), 13);
     }
 
     #[test]
     fn keeps_the_indent_without_a_shell_prompt() {
-        assert_eq!(
-            command_column(None, TIME_WIDTH + 2),
-            INDENT + TIME_WIDTH + 2
-        );
+        assert_eq!(command_column(None, TIME_COLUMN), INDENT + TIME_COLUMN);
         assert_eq!(command_column(None, 0), INDENT);
     }
 
     #[test]
     fn keeps_the_indent_for_a_prompt_too_narrow_for_the_times() {
-        assert_eq!(
-            command_column(Some(17), TIME_WIDTH + 2),
-            INDENT + TIME_WIDTH + 2
-        );
+        assert_eq!(command_column(Some(17), TIME_COLUMN), INDENT + TIME_COLUMN);
     }
 
     #[test]

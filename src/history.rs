@@ -12,7 +12,7 @@ use std::str;
 pub struct Entry {
     /// The command as stored, without the newline that ends it
     pub original: String,
-    /// The command as shown in the finder: newlines, tabs and other control characters become spaces
+    /// The command as shown in the finder: control characters like newlines and tabs become spaces
     pub text: String,
     /// Seconds since the epoch, from the `#<epoch>` line bash writes when HISTTIMEFORMAT is set
     pub time: Option<i64>,
@@ -99,10 +99,10 @@ impl EntryLines {
     }
 }
 
-/// With HISTTIMEFORMAT set bash writes a `#<epoch>` line before each entry, which can start anywhere
-/// in the file when the setting was turned on later. Like bash, a timestamp belongs to the line after
-/// it. When the file starts with a timestamp, an entry also spans every line up to the next timestamp
-/// (multi-line commands), otherwise every line is an entry.
+/// With HISTTIMEFORMAT set bash writes a `#<epoch>` line before each entry, which can start
+/// anywhere in the file when the setting was turned on later. Like bash, a timestamp belongs to the
+/// line after it. When the file starts with a timestamp, an entry also spans every line up to the
+/// next timestamp (multi-line commands), otherwise every line is an entry.
 pub fn parse(content: &[u8]) -> Vec<Entry> {
     group(content, line_ranges(content))
         .into_iter()
