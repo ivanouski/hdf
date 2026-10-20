@@ -27,8 +27,9 @@ pub struct Command {
 #[derive(Debug)]
 pub struct Match {
     pub command_index: usize,
-    /// Bytes of the command matched by the query, for highlighting
-    pub range: Range<usize>,
+    /// Bytes of the command matched by the words of the query, for highlighting: sorted, apart
+    /// from each other, none for a query without words
+    pub ranges: Vec<Range<usize>>,
 }
 
 #[derive(Debug)]
@@ -223,11 +224,11 @@ impl Finder {
             .iter()
             .enumerate()
             .filter_map(|(command_index, Command { text, .. })| {
-                let range = find(text, &self.query)?;
+                let ranges = find_words(text, &self.query)?;
 
                 Some(Match {
                     command_index,
-                    range,
+                    ranges,
                 })
             })
             .collect();
@@ -268,6 +269,27 @@ fn local_time(seconds: i64) -> Option<String> {
     Some(time.format(TIME_FORMAT).to_string())
 }
 
+/// Where each word of the query is in haystack, in any order, ignoring case. A word matches at
+/// its first occurrence, and ranges that overlap or touch are merged. None when a word is missing.
+fn find_words(haystack: &str, query: &str) -> Option<Vec<Range<usize>>> {
+    let mut found = query
+        .split_whitespace()
+        .map(|word| find(haystack, word))
+        .collect::<Option<Vec<_>>>()?;
+    found.sort_by_key(|range| range.start);
+
+    let mut ranges: Vec<Range<usize>> = Vec::with_capacity(found.len());
+
+    for range in found {
+        match ranges.last_mut() {
+            Some(last) if range.start <= last.end => last.end = last.end.max(range.end),
+            _ => ranges.push(range),
+        }
+    }
+
+    Some(ranges)
+}
+
 /// Case-insensitive substring search
 fn find(haystack: &str, needle: &str) -> Option<Range<usize>> {
     let mut starts = haystack
@@ -296,6 +318,8 @@ fn fold(c: char) -> char {
 }
 
 #[cfg(test)]
+// A command matched in one place has one range of bytes, not a range to collect
+#[allow(clippy::single_range_in_vec_init)]
 mod tests {
     use super::*;
     use crate::history;
@@ -460,6 +484,44 @@ mod tests {
     fn treats_special_characters_literally() {
         assert_eq!(find("ls *.rb", "*.rb"), Some(3..7));
         assert_eq!(find("claude", "*aude"), None);
+    }
+
+    #[test]
+    fn finds_every_word_in_any_order() {
+        assert_eq!(
+            find_words("git -C api push", "push git").unwrap(),
+            [0..3, 11..15]
+        );
+        assert_eq!(find_words("git -C api push", "git pull"), None);
+    }
+
+    #[test]
+    fn merges_words_that_overlap_or_touch() {
+        assert_eq!(find_words("git push", "gi git").unwrap(), [0..3]);
+        assert_eq!(find_words("ls ls", "ls ls").unwrap(), [0..2]);
+        assert_eq!(find_words("abc", "a bc").unwrap(), [0..3]);
+        assert_eq!(find_words("git push", "ls ls"), None);
+    }
+
+    #[test]
+    fn ignores_the_spaces_between_words() {
+        assert_eq!(find_words("ls -la", "  ls\t -la  ").unwrap(), [0..2, 3..6]);
+        assert_eq!(find_words("lsof", "ls ").unwrap(), [0..2]);
+    }
+
+    #[test]
+    fn query_without_words_matches_everything() {
+        for (haystack, query) in [("ls", ""), ("ls", "   "), ("", "")] {
+            assert_eq!(find_words(haystack, query).unwrap(), [], "{query:?}");
+        }
+    }
+
+    #[test]
+    fn finds_words_ignoring_case_in_any_script() {
+        assert_eq!(
+            find_words("echo Привет Мир", "мир ПРИВЕТ").unwrap(),
+            [5..17, 18..24]
+        );
     }
 
     #[test]

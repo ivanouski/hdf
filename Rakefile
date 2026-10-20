@@ -6,8 +6,9 @@ Rake::TestTask.new do |task|
   task.pattern = 'test/**/*_test.rb'
 end
 
-desc 'Run the unit tests and clippy'
+desc 'Check the formatting, run the unit tests and clippy'
 task :cargo do
+  sh 'cargo fmt --check'
   sh 'cargo test --quiet'
   sh 'cargo clippy --quiet --all-targets -- -D warnings'
 end

@@ -22,6 +22,13 @@ class HdfPickingTest < HdfTestCase
     assert_cancels(:tab)
   end
 
+  # The only match, so Down stays on it
+  def test_matches_the_words_of_the_query_in_any_order
+    start('claude', 'run')
+
+    assert_picks(:down, :enter, 'sbx run claude')
+  end
+
   def test_down_selects_the_next_match
     start('clau')
 

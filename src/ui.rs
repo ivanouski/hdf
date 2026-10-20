@@ -261,13 +261,14 @@ impl RowLayout {
         }
     }
 
-    /// The part of a command its row shows, next to its number of runs
-    fn fit(&self, command: &Command, range: &Range<usize>) -> Fitted {
+    /// The part of a command its row shows, next to its number of runs, keeping the matches in
+    /// view as far as they fit
+    fn fit(&self, command: &Command, ranges: &[Range<usize>]) -> Fitted {
         let runs_width = runs(command).map_or(0, |runs| runs.width());
 
         fit(
             &command.text,
-            range,
+            &around(ranges),
             self.command_width.saturating_sub(runs_width),
         )
     }
@@ -292,7 +293,7 @@ fn row<'a>(
     // The selected row has a style of its own across its width, the match drawn over it. Its
     // time and number of runs are not dimmed, dim colors are hard to read on its background.
     let dim = if selected { Style::new() } else { theme.dim };
-    let fitted = layout.fit(command, &found.range);
+    let fitted = layout.fit(command, &found.ranges);
     let mut spans = vec![Span::raw(layout.indent.as_str())];
 
     if finder.has_times() {
@@ -306,7 +307,7 @@ fn row<'a>(
 
     spans.extend(highlight(
         &command.text,
-        &found.range,
+        &found.ranges,
         fitted.shown,
         theme.matched,
     ));
@@ -348,7 +349,7 @@ fn preview<'a>(
     let found = finder.matches().get(finder.selected())?;
     let command = &finder.commands()[found.command_index];
 
-    if !layout.fit(command, &found.range).is_cut() {
+    if !layout.fit(command, &found.ranges).is_cut() {
         return None;
     }
 
@@ -368,7 +369,14 @@ fn preview<'a>(
     let divider = dashes(width, theme);
     let mut preview: Vec<Line> = lines
         .into_iter()
-        .map(|shown| Line::from_iter(highlight(&command.text, &found.range, shown, theme.matched)))
+        .map(|shown| {
+            Line::from(highlight(
+                &command.text,
+                &found.ranges,
+                shown,
+                theme.matched,
+            ))
+        })
         .collect();
 
     if cut && let Some(last) = preview.last_mut() {
@@ -379,21 +387,38 @@ fn preview<'a>(
     Some(preview)
 }
 
-/// The shown part of text, with what it holds of the match highlighted
+/// The shown part of text, with what it holds of the matches highlighted. The ranges are sorted
+/// and apart, as the finder makes them.
 fn highlight<'a>(
     text: &'a str,
-    range: &Range<usize>,
+    ranges: &[Range<usize>],
     shown: Range<usize>,
     matched: Style,
-) -> [Span<'a>; 3] {
+) -> Vec<Span<'a>> {
     let clamp = |index: usize| index.clamp(shown.start, shown.end);
-    let (start, end) = (clamp(range.start), clamp(range.end));
+    let mut spans = Vec::new();
+    let mut position = shown.start;
 
-    [
-        Span::raw(&text[shown.start..start]),
-        Span::styled(&text[start..end], matched),
-        Span::raw(&text[end..shown.end]),
-    ]
+    for range in ranges {
+        let (start, end) = (clamp(range.start), clamp(range.end));
+
+        if start < end {
+            spans.push(Span::raw(&text[position..start]));
+            spans.push(Span::styled(&text[start..end], matched));
+            position = end;
+        }
+    }
+
+    spans.push(Span::raw(&text[position..shown.end]));
+    spans
+}
+
+/// From the start of the first match to the end of the last, empty without matches
+fn around(ranges: &[Range<usize>]) -> Range<usize> {
+    match (ranges.first(), ranges.last()) {
+        (Some(first), Some(last)) => first.start..last.end,
+        _ => 0..0,
+    }
 }
 
 /// The part of a command shown in a row, and whether an ellipsis goes before or after it
@@ -1002,6 +1027,59 @@ mod tests {
                 assert!(fitted.shown.start <= range.start, "{width} {range:?}");
             }
         }
+    }
+
+    /// The text of each span, in capitals where it is highlighted
+    fn highlighted(text: &str, ranges: &[Range<usize>], shown: Range<usize>) -> Vec<String> {
+        let matched = Style::new().fg(Color::Yellow);
+
+        highlight(text, ranges, shown, matched)
+            .iter()
+            .map(|span| {
+                if span.style == matched {
+                    span.content.to_uppercase()
+                } else {
+                    span.content.to_string()
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn highlights_every_match() {
+        assert_eq!(
+            highlighted("git -C api push", &[0..3, 11..15], 0..15),
+            ["", "GIT", " -C api ", "PUSH", ""]
+        );
+    }
+
+    #[test]
+    fn highlights_what_is_shown_of_the_matches() {
+        assert_eq!(
+            highlighted("git -C api push", &[0..3, 11..15], 5..13),
+            ["C api ", "PU", ""]
+        );
+        assert_eq!(highlighted("ls", &[], 0..2), ["ls"]);
+    }
+
+    #[test]
+    fn fits_the_text_around_every_match() {
+        assert_eq!(around(&[2..4, 8..9]), 2..9);
+        assert_eq!(around(&[]), 0..0);
+    }
+
+    #[test]
+    fn highlights_the_words_of_the_query_in_a_row() {
+        let finder = Finder::new(
+            &history::parse(b"git -C api push\n"),
+            "push git".to_string(),
+        );
+        let buffer = Render::new(&finder).run().buffer;
+        let cell = |x| &buffer[(x, FIRST_ROW)];
+
+        assert_eq!(text(&buffer, FIRST_ROW).trim_end(), "  git -C api push");
+        assert!((2..5).chain(13..17).all(|x| cell(x).fg == Color::Yellow));
+        assert!((5..13).all(|x| cell(x).fg == Color::Reset));
     }
 
     #[test]

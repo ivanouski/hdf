@@ -7,8 +7,8 @@ use crate::config;
 const USAGE: &str = "\
 Usage: hdf [OPTIONS] [QUERY]
 
-Search bash history in $HISTFILE and print the chosen command. The query matches
-case-insensitively.
+Search bash history in $HISTFILE and print the chosen command. Each word of the
+query matches anywhere in a command, in any order, ignoring case.
 
 Options:
   --print-query      on Esc, print the query and exit with 3
