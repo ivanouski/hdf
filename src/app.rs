@@ -7,7 +7,7 @@ use std::sync::atomic::Ordering;
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::text::Line;
 
-use crate::config::Config;
+use crate::config::{Config, ListPosition};
 use crate::context::Context;
 use crate::finder::Finder;
 use crate::history::History;
@@ -30,14 +30,14 @@ pub enum Outcome {
     Signaled(usize),
 }
 
-/// Runs the finder in a pane under the cursor's line, returns how it was left
+/// Runs the finder in a pane from the cursor's line down, returns how it was left
 pub fn pick(
     finder: &mut Finder,
     history: &mut History,
     config: &Config,
     prompt: Option<&Line>,
 ) -> io::Result<Outcome> {
-    let theme = &config.colors;
+    let list = config.list;
     let mut pane = Pane::open(config.height)?;
     let mut offset = 0;
     let mut status = None;
@@ -46,13 +46,13 @@ pub fn pick(
 
     let outcome = loop {
         pane.draw(|frame| {
-            page = ui::draw(frame, finder, theme, prompt, status.as_ref(), &mut offset);
+            page = ui::draw(frame, finder, config, prompt, status.as_ref(), &mut offset);
         })?;
 
         match tty::next_event(&signal)? {
             None => break Outcome::Signaled(signal.load(Ordering::Relaxed)),
             Some(Event::Key(key)) if key.kind == KeyEventKind::Press => {
-                match handle_key(key, finder, history, page) {
+                match handle_key(key, finder, history, page, list) {
                     Break(outcome) => break outcome,
                     Continue(next_status) => status = next_status,
                 }
@@ -62,9 +62,14 @@ pub fn pick(
         }
     };
 
-    // The shell prompt stays for bash to draw over
+    // The shell prompt stays for bash to draw over, on the first row where bash drew it. Above
+    // the list the prompt line is the last row, so the prompt moves up first.
     let width = pane.width();
-    let closed = pane.close(ui::shell_prompt(prompt, width).map_or(0, Line::width));
+    let moved = match list {
+        ListPosition::Below => Ok(()),
+        ListPosition::Above => pane.draw(|frame| ui::draw_shell_prompt(frame, prompt)),
+    };
+    let closed = moved.and(pane.close(ui::shell_prompt(prompt, width).map_or(0, Line::width)));
 
     // After SIGHUP the terminal may be gone, the signal still decides the exit status
     match outcome {
@@ -74,15 +79,18 @@ pub fn pick(
 }
 
 /// Leaves the finder with an outcome, or stays with the status to show until the next key. PgUp and
-/// PgDn move the selection by the page, the rows of the list.
+/// PgDn move the selection by the page, the rows of the list. The keys move it up and down the
+/// screen, so above the prompt line Up goes to older commands.
 fn handle_key(
     key: KeyEvent,
     finder: &mut Finder,
     history: &mut History,
     page: usize,
+    list: ListPosition,
 ) -> ControlFlow<Outcome, Option<Status>> {
     let control = key.modifiers.contains(KeyModifiers::CONTROL);
     let alt = key.modifiers.contains(KeyModifiers::ALT);
+    let above = list == ListPosition::Above;
 
     match (key.code, control) {
         (KeyCode::Esc, _) => return Break(Outcome::Quit),
@@ -99,6 +107,10 @@ fn handle_key(
             });
         }
         (KeyCode::Char('d'), true) => return Continue(delete(finder, history)),
+        (KeyCode::Up, _) | (KeyCode::Char('p'), true) if above => finder.down(),
+        (KeyCode::Down, _) | (KeyCode::Char('n'), true) if above => finder.up(),
+        (KeyCode::PageUp, _) if above => finder.page_down(page),
+        (KeyCode::PageDown, _) if above => finder.page_up(page),
         (KeyCode::Up, _) | (KeyCode::Char('p'), true) => finder.up(),
         (KeyCode::Down, _) | (KeyCode::Char('n'), true) => finder.down(),
         (KeyCode::PageUp, _) => finder.page_up(page),
@@ -165,6 +177,7 @@ mod tests {
         file: TempFile,
         history: History,
         finder: Finder,
+        list: ListPosition,
     }
 
     impl Session {
@@ -177,6 +190,7 @@ mod tests {
                 file,
                 history,
                 finder,
+                list: ListPosition::Below,
             }
         }
 
@@ -190,6 +204,7 @@ mod tests {
                 &mut self.finder,
                 &mut self.history,
                 PAGE,
+                self.list,
             )
         }
 
@@ -227,6 +242,26 @@ mod tests {
             (KeyCode::PageUp, 0),
         ] {
             session.edit(code, NONE);
+            assert_eq!(session.finder.selected(), selected);
+        }
+    }
+
+    #[test]
+    fn moves_the_selection_up_the_screen_to_older_commands_above_the_prompt_line() {
+        let mut session = Session::open("move-above");
+        session.list = ListPosition::Above;
+
+        for (code, modifiers, selected) in [
+            (KeyCode::Down, NONE, 0),
+            (KeyCode::Up, NONE, 1),
+            (KeyCode::Char('p'), CONTROL, 2),
+            (KeyCode::Up, NONE, 2),
+            (KeyCode::Down, NONE, 1),
+            (KeyCode::Char('n'), CONTROL, 0),
+            (KeyCode::PageUp, NONE, 2),
+            (KeyCode::PageDown, NONE, 0),
+        ] {
+            session.edit(code, modifiers);
             assert_eq!(session.finder.selected(), selected);
         }
     }

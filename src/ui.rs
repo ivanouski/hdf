@@ -3,13 +3,13 @@
 use std::ops::Range;
 
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{List, ListDirection, ListItem, ListState, Paragraph};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::config::Theme;
+use crate::config::{Config, ListPosition, Theme};
 use crate::finder::{Command, Finder, Match, TIME_WIDTH};
 
 /// Before the commands, or their times, when they do not line up under the query
@@ -41,42 +41,61 @@ pub enum Status {
 pub fn draw(
     frame: &mut Frame,
     finder: &Finder,
-    theme: &Theme,
+    config: &Config,
     prompt: Option<&Line>,
     status: Option<&Status>,
     offset: &mut usize,
 ) -> usize {
+    let (theme, list) = (&config.colors, config.list);
     let area = frame.area();
     let shell_prompt = shell_prompt(prompt, area.width);
     let layout = RowLayout::new(finder, shell_prompt.map(Line::width), area.width);
-    let [prompt_area, divider_area, body] = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Fill(1),
-    ])
-    .areas(area);
-    let preview = preview(finder, &layout, body, theme).unwrap_or_default();
-    let [list_area, preview_area] = Layout::vertical([
-        Constraint::Fill(1),
-        Constraint::Length(saturating_u16(preview.len())),
-    ])
-    .areas(body);
+    let [prompt_area, divider_area, body] = split(area, list);
+    let preview = preview(finder, &layout, body, theme, list).unwrap_or_default();
+    let preview_height = Constraint::Length(saturating_u16(preview.len()));
+    let [list_area, preview_area] = match list {
+        ListPosition::Below => Layout::vertical([Constraint::Fill(1), preview_height]).areas(body),
+        ListPosition::Above => {
+            let [preview_area, list_area] =
+                Layout::vertical([preview_height, Constraint::Fill(1)]).areas(body);
+            [list_area, preview_area]
+        }
+    };
 
     draw_prompt_line(frame, prompt_area, shell_prompt, finder, theme);
     draw_divider(frame, divider_area, finder, theme, status);
-    let height = draw_list(frame, list_area, finder, &layout, theme, offset);
+    let height = draw_list(frame, list_area, finder, &layout, theme, list, offset);
     frame.render_widget(Paragraph::new(preview), preview_area);
 
     height
 }
 
-/// Draws the matches in view, or says there are none, returns the rows of the list
+/// The prompt line, the divider and the rest for the list and the preview. Above the list, the
+/// prompt line is the last row and the divider the one over it. The prompt line keeps its row in a
+/// pane of one.
+fn split(area: Rect, list: ListPosition) -> [Rect; 3] {
+    let row = Constraint::Length(1);
+
+    match list {
+        ListPosition::Below => Layout::vertical([row, row, Constraint::Fill(1)]).areas(area),
+        ListPosition::Above => {
+            // Split one row at a time, rows given together go to the first when short
+            let [upper, prompt] = Layout::vertical([Constraint::Fill(1), row]).areas(area);
+            let [rest, divider] = Layout::vertical([Constraint::Fill(1), row]).areas(upper);
+            [prompt, divider, rest]
+        }
+    }
+}
+
+/// Draws the matches in view, or says there are none, returns the rows of the list. Above the
+/// prompt line the list goes up, the first match in view on the last row.
 fn draw_list(
     frame: &mut Frame,
     area: Rect,
     finder: &Finder,
     layout: &RowLayout,
     theme: &Theme,
+    list: ListPosition,
     offset: &mut usize,
 ) -> usize {
     // Only the rows in view are built, the list scrolls like ratatui's would with all of them
@@ -84,7 +103,14 @@ fn draw_list(
     *offset = list_offset(*offset, finder, height);
 
     if finder.matches().is_empty() {
-        frame.render_widget(Paragraph::new(nothing_found(finder, layout, theme)), area);
+        // On the row next to the divider, where the first match would be
+        let [row] = match list {
+            ListPosition::Below => Layout::vertical([Constraint::Length(1)]).areas(area),
+            ListPosition::Above => Layout::vertical([Constraint::Length(1)])
+                .flex(Flex::End)
+                .areas(area),
+        };
+        frame.render_widget(Paragraph::new(nothing_found(finder, layout, theme)), row);
         return height;
     }
 
@@ -96,8 +122,13 @@ fn draw_list(
         .take(height)
         .map(|(index, found)| row(finder, found, index == finder.selected(), layout, theme));
 
+    let direction = match list {
+        ListPosition::Below => ListDirection::TopToBottom,
+        ListPosition::Above => ListDirection::BottomToTop,
+    };
+
     frame.render_stateful_widget(
-        List::new(rows),
+        List::new(rows).direction(direction),
         area,
         &mut ListState::default().with_selected(Some(finder.selected() - *offset)),
     );
@@ -123,6 +154,13 @@ fn list_offset(offset: usize, finder: &Finder, height: usize) -> usize {
 /// room, None for > in its place
 pub fn shell_prompt<'a>(prompt: Option<&'a Line<'a>>, width: u16) -> Option<&'a Line<'a>> {
     prompt.filter(|prompt| prompt.width() > 0 && prompt.width() * 5 <= usize::from(width) * 3)
+}
+
+/// Only the shell prompt, on the first row, for the pane to keep when it closes
+pub fn draw_shell_prompt(frame: &mut Frame, prompt: Option<&Line>) {
+    if let Some(prompt) = shell_prompt(prompt, frame.area().width) {
+        frame.render_widget(Paragraph::new(prompt.clone()), frame.area());
+    }
 }
 
 fn draw_prompt_line(
@@ -338,13 +376,14 @@ fn runs(command: &Command) -> Option<String> {
     (runs > 1).then(|| format!(" ({runs})"))
 }
 
-/// The selected command in full under the list, after a divider, when its row is cut and the pane
-/// has room for it
+/// The selected command in full past the list, apart from it by a divider, when its row is cut and
+/// the pane has room for it
 fn preview<'a>(
     finder: &'a Finder,
     layout: &RowLayout,
     area: Rect,
     theme: &Theme,
+    list: ListPosition,
 ) -> Option<Vec<Line<'a>>> {
     let found = finder.matches().get(finder.selected())?;
     let command = &finder.commands()[found.command_index];
@@ -383,7 +422,11 @@ fn preview<'a>(
         last.push_span(Span::styled(ELLIPSIS, theme.dim));
     }
 
-    preview.insert(0, divider);
+    match list {
+        ListPosition::Below => preview.insert(0, divider),
+        ListPosition::Above => preview.push(divider),
+    }
+
     Some(preview)
 }
 
@@ -564,6 +607,7 @@ mod tests {
         theme: Theme,
         prompt: Option<&'a str>,
         status: Option<Status>,
+        list: ListPosition,
         width: u16,
         height: u16,
         offset: usize,
@@ -583,6 +627,7 @@ mod tests {
                 theme: Theme::default(),
                 prompt: None,
                 status: None,
+                list: ListPosition::Below,
                 width: 40,
                 height: 4,
                 offset: 0,
@@ -607,6 +652,13 @@ mod tests {
             }
         }
 
+        fn above(self) -> Self {
+            Self {
+                list: ListPosition::Above,
+                ..self
+            }
+        }
+
         fn width(self, width: u16) -> Self {
             Self { width, ..self }
         }
@@ -622,6 +674,11 @@ mod tests {
         fn run(self) -> Rendered {
             let prompt = self.prompt.map(prompt::parse);
             let mut terminal = Terminal::new(TestBackend::new(self.width, self.height)).unwrap();
+            let config = Config {
+                list: self.list,
+                colors: self.theme,
+                ..Config::default()
+            };
             let mut offset = self.offset;
             let mut page = 0;
             terminal
@@ -629,7 +686,7 @@ mod tests {
                     page = draw(
                         frame,
                         self.finder,
-                        &self.theme,
+                        &config,
                         prompt.as_ref(),
                         self.status.as_ref(),
                         &mut offset,
@@ -1151,5 +1208,114 @@ mod tests {
 
         finder.down();
         assert_eq!(Render::new(&finder).height(8).run().page, 6);
+    }
+
+    /// The rows of a pane of 5 with the list above the prompt line: the list, the divider and the
+    /// prompt line
+    const ABOVE_DIVIDER_ROW: u16 = 3;
+    const ABOVE_PROMPT_ROW: u16 = 4;
+
+    /// The commands on the rows of the list above the prompt line, from the divider up
+    fn listed_above(finder: &Finder, offset: &mut usize) -> Vec<String> {
+        let rendered = Render::new(finder).above().height(5).offset(*offset).run();
+        *offset = rendered.offset;
+
+        (0..ABOVE_DIVIDER_ROW)
+            .rev()
+            .map(|y| text(&rendered.buffer, y).trim().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn lists_the_matches_up_from_the_divider_above_the_prompt_line() {
+        let Rendered { buffer, cursor, .. } = Render::new(&finder(HISTORY)).above().height(5).run();
+
+        assert_eq!(text(&buffer, ABOVE_PROMPT_ROW).trim_end(), "> ls");
+        assert_eq!(cursor, Position::new(4, ABOVE_PROMPT_ROW));
+        assert!(text(&buffer, ABOVE_DIVIDER_ROW).ends_with(" 2/2 ──"));
+        // The most recent command is selected, next to the divider
+        assert!(text(&buffer, 2).trim_end().ends_with("  ls"));
+        assert!((0..40).all(|x| buffer[(x, 2)].bg == Color::Indexed(238)));
+        assert!(text(&buffer, 1).trim_end().ends_with("  ls -la"));
+        assert_eq!(text(&buffer, 0).trim(), "");
+    }
+
+    #[test]
+    fn scrolls_the_list_above_the_prompt_line_to_keep_the_selection_in_view() {
+        let mut finder = finder("ls 1\nls 2\nls 3\nls 4\nls 5\nls 6\n");
+        let commands: Vec<String> = finder
+            .matches()
+            .iter()
+            .map(|found| finder.commands()[found.command_index].text.clone())
+            .collect();
+        let offset = &mut 0;
+
+        assert_eq!(listed_above(&finder, offset), commands[0..3]);
+
+        finder.select(4);
+        assert_eq!(listed_above(&finder, offset), commands[2..5]);
+
+        finder.select(1);
+        assert_eq!(listed_above(&finder, offset), commands[1..4]);
+    }
+
+    #[test]
+    fn says_so_next_to_the_divider_when_nothing_matches_above_the_prompt_line() {
+        let finder = Finder::new(&history::parse(HISTORY.as_bytes()), "pwd".to_string());
+        let buffer = Render::new(&finder).above().height(5).run().buffer;
+
+        assert_eq!(
+            text(&buffer, 2).trim_end(),
+            format!("{}no matches", " ".repeat(20))
+        );
+        assert_eq!(text(&buffer, 0).trim(), "");
+        assert_eq!(text(&buffer, 1).trim(), "");
+    }
+
+    #[test]
+    fn previews_the_selected_command_over_the_list_above_the_prompt_line() {
+        let buffer = Render::new(&finder(LONG)).above().height(8).run().buffer;
+
+        assert_eq!(
+            text(&buffer, 0).trim_end(),
+            "echo one two three four five six seven"
+        );
+        assert_eq!(text(&buffer, 1).trim_end(), "eight nine; ls");
+        assert_eq!(text(&buffer, 2), DASH.repeat(40));
+        // Three rows of the list, the selected command next to the divider
+        assert!(text(&buffer, 5).ends_with("ls (2)"));
+        assert!(text(&buffer, 6).ends_with(" 2/2 ──"));
+        assert_eq!(text(&buffer, 7).trim_end(), "> ls");
+    }
+
+    #[test]
+    fn keeps_the_prompt_line_in_a_pane_of_one_row_above_the_list() {
+        let Rendered { buffer, cursor, .. } = Render::new(&finder(HISTORY)).above().height(1).run();
+
+        assert_eq!(text(&buffer, 0).trim_end(), "> ls");
+        assert_eq!(cursor, Position::new(4, 0));
+    }
+
+    #[test]
+    fn keeps_the_prompt_line_and_the_divider_in_a_pane_of_two_rows_above_the_list() {
+        let buffer = Render::new(&finder(HISTORY)).above().height(2).run().buffer;
+
+        assert!(text(&buffer, 0).ends_with(" 2/2 ──"));
+        assert_eq!(text(&buffer, 1).trim_end(), "> ls");
+    }
+
+    #[test]
+    fn leaves_only_the_shell_prompt_on_the_first_row_to_close() {
+        let prompt = prompt::parse("\x01\x1b[35m\x02dir\x01\x1b[0m\x02$ ");
+        let mut terminal = Terminal::new(TestBackend::new(20, 3)).unwrap();
+        terminal
+            .draw(|frame| draw_shell_prompt(frame, Some(&prompt)))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+
+        assert_eq!(text(buffer, 0), format!("dir$ {}", " ".repeat(15)));
+        assert_eq!(buffer[(0, 0)].fg, Color::Magenta);
+        assert_eq!(text(buffer, 1).trim(), "");
+        assert_eq!(text(buffer, 2).trim(), "");
     }
 }

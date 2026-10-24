@@ -1,6 +1,6 @@
 [package]
 name = "hdf"
-version = "0.19.0"
+version = "0.20.0"
 edition = "2024"
 description = "A fuzzy finder for bash history"
 license = "MIT"

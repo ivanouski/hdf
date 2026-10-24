@@ -1,4 +1,4 @@
-//! The part of the terminal under the prompt line that the finder draws in
+//! The part of the terminal from the cursor's line down that the finder draws in
 
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter, Write};

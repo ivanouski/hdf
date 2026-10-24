@@ -35,7 +35,8 @@ Keys:
   Esc                       quit, exit with 1
   Ctrl-C                    quit, exit with 130
 
-Without matches, Enter and Tab quit like Esc.
+Without matches, Enter and Tab quit like Esc. With the list above the prompt
+line, Up, Ctrl-P and PgUp move to older commands.
 
 Config: $XDG_CONFIG_HOME/hdf/config.toml, defaults:
 

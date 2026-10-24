@@ -15,7 +15,8 @@ use crate::context::Context;
 
 /// The defaults as a config file, for --help and --init-config. A test keeps them the same as
 /// `Config::default`.
-pub const DEFAULT: &str = r#"height = 12  # rows of the pane, the terminal's at most
+pub const DEFAULT: &str = r#"height = 12       # rows of the pane, the terminal's at most
+list   = "below"  # or "above" the prompt line, like fzf
 [colors]
 prompt   = { fg = "blue", bold = true }
 count    = "dark-gray"     # matches/commands
@@ -38,13 +39,25 @@ pub struct Config {
     /// Rows of the pane, fewer when the terminal has fewer
     #[serde(deserialize_with = "height")]
     pub height: u16,
+    pub list: ListPosition,
     pub colors: Theme,
+}
+
+/// Where the list goes from the prompt line. Above it, the prompt line is the last row of the pane
+/// and the list goes up from there, the most recent command nearest to it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ListPosition {
+    #[default]
+    Below,
+    Above,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
             height: DEFAULT_HEIGHT,
+            list: ListPosition::default(),
             colors: Theme::default(),
         }
     }
@@ -55,7 +68,7 @@ impl Default for Config {
 pub struct Theme {
     #[serde(deserialize_with = "style")]
     pub prompt: Style,
-    /// The match count under the prompt line
+    /// The match count in the divider next to the prompt line
     #[serde(deserialize_with = "style")]
     pub count: Style,
     /// The status after Ctrl-D deleted a command, or failed to
@@ -246,6 +259,7 @@ mod tests {
         let config = Config::parse(DEFAULT).unwrap();
 
         assert_eq!(config.height, Config::default().height);
+        assert_eq!(config.list, Config::default().list);
         assert_eq!(config.colors, Theme::default());
     }
 
@@ -254,6 +268,25 @@ mod tests {
         assert_eq!(Config::parse("").unwrap().height, DEFAULT_HEIGHT);
         assert_eq!(Config::parse("height = 20\n").unwrap().height, 20);
         assert_eq!(Config::parse("height = 3\n").unwrap().height, 3);
+    }
+
+    #[test]
+    fn reads_where_the_list_goes() {
+        assert_eq!(Config::parse("").unwrap().list, ListPosition::Below);
+        assert_eq!(
+            Config::parse("list = \"below\"\n").unwrap().list,
+            ListPosition::Below
+        );
+        assert_eq!(
+            Config::parse("list = \"above\"\n").unwrap().list,
+            ListPosition::Above
+        );
+    }
+
+    #[test]
+    fn rejects_other_list_positions() {
+        assert!(error("list = \"top\"\n").contains("unknown variant `top`"));
+        assert!(error("list = \"Above\"\n").contains("expected `below` or `above`"));
     }
 
     #[test]

@@ -88,6 +88,9 @@ width.
 | Esc                         | quit, keeping the query                     |
 | Ctrl-C                      | quit, leaving the prompt line as it was     |
 
+With the list above the prompt line, Up, Ctrl-P and PgUp move to older commands, see
+[Config](#config).
+
 `hdf --delete-last [N]` deletes the last N commands from history, 1 by default, and prints them.
 It needs the history saved at each prompt, see [Bash history](#bash-history).
 
@@ -99,7 +102,8 @@ It needs the history saved at each prompt, see [Bash history](#bash-history).
 `$XDG_CONFIG_HOME`). Keys left out keep their defaults:
 
 ```toml
-height = 12  # rows of the pane, the terminal's at most
+height = 12       # rows of the pane, the terminal's at most
+list   = "below"  # or "above" the prompt line, like fzf
 [colors]
 prompt   = { fg = "blue", bold = true }
 count    = "dark-gray"     # matches/commands
@@ -110,7 +114,12 @@ dim      = "dark-gray"     # times, numbers of runs, cuts, the dividers
 selected = { bg = "238" }  # the selected row, under the match
 ```
 
-`height` counts the prompt line and the divider under it, so it is at least 3.
+`height` counts the prompt line and the divider, so it is at least 3.
+
+With `list = "above"` the prompt line is the last row of the pane and the most recent commands
+are right over it. Up, Ctrl-P and PgUp then move to older commands, up the list, and Up in bash
+opens hdf and keeps going back in history. When the pane closes, the prompt goes back to the row
+it was on.
 
 A color is a name (`yellow`, `light-blue`, `dark-gray`), `0` to `255` or `#rrggbb`, or a table of
 `fg`, `bg`, `bold`, `italic`, `underlined` and `reversed`.
