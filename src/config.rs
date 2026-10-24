@@ -14,8 +14,9 @@ use serde::de::{self, Deserializer, MapAccess, Visitor};
 use crate::context::Context;
 
 /// The defaults as a config file, for --help and --init-config. A test keeps them the same as
-/// `Theme::default`.
-pub const DEFAULT: &str = r#"[colors]
+/// `Config::default`.
+pub const DEFAULT: &str = r#"height = 12  # rows of the pane, the terminal's at most
+[colors]
 prompt   = { fg = "blue", bold = true }
 count    = "dark-gray"     # matches/commands
 deleted  = "green"         # the status after Ctrl-D
@@ -25,11 +26,28 @@ dim      = "dark-gray"     # times, numbers of runs, cuts, the dividers
 selected = { bg = "238" }  # the selected row, under the match
 "#;
 
+/// Rows of the pane without a height in the config
+const DEFAULT_HEIGHT: u16 = 12;
+/// The prompt line, the divider and a row of the list
+const MIN_HEIGHT: u16 = 3;
+
 /// The config file, every key optional
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
+    /// Rows of the pane, fewer when the terminal has fewer
+    #[serde(deserialize_with = "height")]
+    pub height: u16,
     pub colors: Theme,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            height: DEFAULT_HEIGHT,
+            colors: Theme::default(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -126,6 +144,18 @@ fn path() -> Option<PathBuf> {
         .map(|dir| dir.join("hdf").join("config.toml"))
 }
 
+fn height<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u16, D::Error> {
+    let height = u16::deserialize(deserializer)?;
+
+    if height < MIN_HEIGHT {
+        return Err(de::Error::custom(format!(
+            "height must be at least {MIN_HEIGHT}"
+        )));
+    }
+
+    Ok(height)
+}
+
 /// A style is a table of colors and modifiers, or just a color for the foreground
 fn style<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Style, D::Error> {
     struct StyleVisitor;
@@ -213,7 +243,25 @@ mod tests {
 
     #[test]
     fn writes_the_defaults_as_a_config() {
-        assert_eq!(theme(DEFAULT), Theme::default());
+        let config = Config::parse(DEFAULT).unwrap();
+
+        assert_eq!(config.height, Config::default().height);
+        assert_eq!(config.colors, Theme::default());
+    }
+
+    #[test]
+    fn reads_the_height() {
+        assert_eq!(Config::parse("").unwrap().height, DEFAULT_HEIGHT);
+        assert_eq!(Config::parse("height = 20\n").unwrap().height, 20);
+        assert_eq!(Config::parse("height = 3\n").unwrap().height, 3);
+    }
+
+    #[test]
+    fn rejects_heights_without_a_row_for_the_list() {
+        assert!(error("height = 2\n").contains("height must be at least 3"));
+        assert!(error("height = 0\n").contains("height must be at least 3"));
+        assert!(error("height = -1\n").contains("invalid value"));
+        assert!(error("height = \"12\"\n").contains("expected u16"));
     }
 
     #[test]

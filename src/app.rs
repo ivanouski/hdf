@@ -7,7 +7,7 @@ use std::sync::atomic::Ordering;
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::text::Line;
 
-use crate::config::Theme;
+use crate::config::Config;
 use crate::context::Context;
 use crate::finder::Finder;
 use crate::history::History;
@@ -34,10 +34,11 @@ pub enum Outcome {
 pub fn pick(
     finder: &mut Finder,
     history: &mut History,
-    theme: &Theme,
+    config: &Config,
     prompt: Option<&Line>,
 ) -> io::Result<Outcome> {
-    let mut pane = Pane::open()?;
+    let theme = &config.colors;
+    let mut pane = Pane::open(config.height)?;
     let mut offset = 0;
     let mut status = None;
     let mut page = 1;

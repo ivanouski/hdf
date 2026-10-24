@@ -11,8 +11,6 @@ use ratatui::{Frame, Terminal, TerminalOptions, Viewport};
 
 use crate::tty::{RawMode, StdoutToTty};
 
-const PANE_HEIGHT: u16 = 12;
-
 /// Holds a whole frame, so it reaches the terminal at once rather than cell by cell
 const FRAME_BUFFER: usize = 1 << 16;
 
@@ -27,7 +25,8 @@ pub struct Pane {
 }
 
 impl Pane {
-    pub fn open() -> io::Result<Self> {
+    /// Height rows tall, or as tall as the terminal
+    pub fn open(height: u16) -> io::Result<Self> {
         let mut tty = OpenOptions::new().read(true).write(true).open("/dev/tty")?;
         let stdout = StdoutToTty::new(&tty)?;
         let raw_mode = RawMode::enable()?;
@@ -40,7 +39,7 @@ impl Pane {
             tty.write_all(b"\r\n")?;
         }
 
-        let height = terminal::size()?.1.min(PANE_HEIGHT);
+        let height = terminal::size()?.1.min(height);
         let terminal = Terminal::with_options(
             CrosstermBackend::new(BufWriter::with_capacity(FRAME_BUFFER, tty)),
             TerminalOptions {

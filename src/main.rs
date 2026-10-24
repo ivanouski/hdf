@@ -74,8 +74,8 @@ fn run() -> Result<ExitCode, String> {
     let mut finder = Finder::new(history.entries(), query);
     let prompt = prompt.map(|text| prompt::parse(&text));
 
-    let outcome = app::pick(&mut finder, &mut history, &config.colors, prompt.as_ref())
-        .context("terminal error")?;
+    let outcome =
+        app::pick(&mut finder, &mut history, &config, prompt.as_ref()).context("terminal error")?;
 
     match outcome {
         Outcome::Picked(command) => {

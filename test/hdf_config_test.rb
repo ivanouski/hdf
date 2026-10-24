@@ -23,6 +23,30 @@ class HdfConfigTest < HdfTestCase
     refute_color '48;5;238'
   end
 
+  def test_takes_the_pane_height_from_the_config
+    write_config("height = 6\n")
+    start('')
+
+    # The prompt line and the commands under the divider
+    assert_equal 5, pane.size
+  end
+
+  def test_fits_a_pane_higher_than_the_terminal
+    write_config("height = 100\n")
+    start('', rows: 8)
+
+    assert_equal 7, pane.size
+    assert_picks(:enter, 'gg')
+  end
+
+  def test_fails_on_a_height_without_a_row_for_the_list
+    write_config("height = 2\n")
+    _, stderr, status = run_hdf('ls')
+
+    assert_equal 2, status.exitstatus
+    assert_includes stderr, 'height must be at least 3'
+  end
+
   def test_falls_back_to_the_config_in_home
     write_config(%([colors]\nselected = { bg = "21" }\n), home: File.join(@tmp_dir, '.config'))
     start('cd', env: { 'XDG_CONFIG_HOME' => nil, 'HOME' => @tmp_dir })
@@ -51,7 +75,7 @@ class HdfConfigTest < HdfTestCase
     path = File.join(config_home, 'hdf', 'config.toml')
     stdout, stderr, status = run_hdf('--init-config')
     help, = run_hdf('--help')
-    defaults = help[/^    \[colors\]\n(?:    .*\n)+/].gsub(/^    /, '')
+    defaults = help[/^    height.*\n(?:    .*\n)+/].gsub(/^    /, '')
 
     assert status.success?, stderr
     assert_equal "#{path}\n", stdout
