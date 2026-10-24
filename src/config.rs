@@ -17,13 +17,14 @@ use crate::context::Context;
 /// `Config::default`.
 pub const DEFAULT: &str = r#"height = 12       # rows of the pane, the terminal's at most
 list   = "below"  # or "above" the prompt line, like fzf
+border = false    # a line on the far edge of the pane
 [colors]
 prompt   = { fg = "blue", bold = true }
 count    = "dark-gray"     # matches/commands
 deleted  = "green"         # the status after Ctrl-D
 error    = "red"           # Ctrl-D failed, the count of no matches
 match    = { fg = "yellow", bold = true }
-dim      = "dark-gray"     # times, numbers of runs, cuts, the dividers
+dim      = "dark-gray"     # times, run counts, cuts, dividers, border
 selected = { bg = "238" }  # the selected row, under the match
 "#;
 
@@ -40,6 +41,8 @@ pub struct Config {
     #[serde(deserialize_with = "height")]
     pub height: u16,
     pub list: ListPosition,
+    /// A line on the edge of the pane away from the prompt line
+    pub border: bool,
     pub colors: Theme,
 }
 
@@ -58,6 +61,7 @@ impl Default for Config {
         Self {
             height: DEFAULT_HEIGHT,
             list: ListPosition::default(),
+            border: false,
             colors: Theme::default(),
         }
     }
@@ -79,7 +83,7 @@ pub struct Theme {
     #[serde(rename = "match", deserialize_with = "style")]
     pub matched: Style,
     /// The time column, the number of runs and the ellipses of cut commands, on rows other than
-    /// the selected one, and the dividers
+    /// the selected one, the dividers and the border
     #[serde(deserialize_with = "style")]
     pub dim: Style,
     /// The whole selected row, with the match drawn over it
@@ -260,6 +264,7 @@ mod tests {
 
         assert_eq!(config.height, Config::default().height);
         assert_eq!(config.list, Config::default().list);
+        assert_eq!(config.border, Config::default().border);
         assert_eq!(config.colors, Theme::default());
     }
 
@@ -281,6 +286,13 @@ mod tests {
             Config::parse("list = \"above\"\n").unwrap().list,
             ListPosition::Above
         );
+    }
+
+    #[test]
+    fn reads_the_border() {
+        assert!(!Config::parse("").unwrap().border);
+        assert!(Config::parse("border = true\n").unwrap().border);
+        assert!(error("border = \"yes\"\n").contains("expected a boolean"));
     }
 
     #[test]

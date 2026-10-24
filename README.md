@@ -104,13 +104,14 @@ It needs the history saved at each prompt, see [Bash history](#bash-history).
 ```toml
 height = 12       # rows of the pane, the terminal's at most
 list   = "below"  # or "above" the prompt line, like fzf
+border = false    # a line on the far edge of the pane
 [colors]
 prompt   = { fg = "blue", bold = true }
 count    = "dark-gray"     # matches/commands
 deleted  = "green"         # the status after Ctrl-D
 error    = "red"           # Ctrl-D failed, the count of no matches
 match    = { fg = "yellow", bold = true }
-dim      = "dark-gray"     # times, numbers of runs, cuts, the dividers
+dim      = "dark-gray"     # times, run counts, cuts, dividers, border
 selected = { bg = "238" }  # the selected row, under the match
 ```
 
@@ -120,6 +121,10 @@ With `list = "above"` the prompt line is the last row of the pane and the most r
 are right over it. Up, Ctrl-P and PgUp then move to older commands, up the list, and Up in bash
 opens hdf and keeps going back in history. When the pane closes, the prompt goes back to the row
 it was on.
+
+`border = true` draws a line on the edge of the pane away from the prompt line, the last row below
+it or the first row above, in the `dim` color. It takes a row from the list, and is left out when
+the pane has no room for it and a row of the list.
 
 A color is a name (`yellow`, `light-blue`, `dark-gray`), `0` to `255` or `#rrggbb`, or a table of
 `fg`, `bg`, `bold`, `italic`, `underlined` and `reversed`.

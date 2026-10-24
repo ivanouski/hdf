@@ -51,6 +51,7 @@ pub fn draw(
     let shell_prompt = shell_prompt(prompt, area.width);
     let layout = RowLayout::new(finder, shell_prompt.map(Line::width), area.width);
     let [prompt_area, divider_area, body] = split(area, list);
+    let (body, border_area) = split_border(body, config.border, list);
     let preview = preview(finder, &layout, body, theme, list).unwrap_or_default();
     let preview_height = Constraint::Length(saturating_u16(preview.len()));
     let [list_area, preview_area] = match list {
@@ -66,6 +67,11 @@ pub fn draw(
     draw_divider(frame, divider_area, finder, theme, status);
     let height = draw_list(frame, list_area, finder, &layout, theme, list, offset);
     frame.render_widget(Paragraph::new(preview), preview_area);
+
+    if let Some(border_area) = border_area {
+        let border = dashes(usize::from(border_area.width), theme);
+        frame.render_widget(Paragraph::new(border), border_area);
+    }
 
     height
 }
@@ -83,6 +89,27 @@ fn split(area: Rect, list: ListPosition) -> [Rect; 3] {
             let [upper, prompt] = Layout::vertical([Constraint::Fill(1), row]).areas(area);
             let [rest, divider] = Layout::vertical([Constraint::Fill(1), row]).areas(upper);
             [prompt, divider, rest]
+        }
+    }
+}
+
+/// The rest of the body and the border on its far edge, away from the prompt line, when the border
+/// is on and leaves a row for the list
+fn split_border(body: Rect, border: bool, list: ListPosition) -> (Rect, Option<Rect>) {
+    if !border || body.height < 2 {
+        return (body, None);
+    }
+
+    let row = Constraint::Length(1);
+
+    match list {
+        ListPosition::Below => {
+            let [rest, edge] = Layout::vertical([Constraint::Fill(1), row]).areas(body);
+            (rest, Some(edge))
+        }
+        ListPosition::Above => {
+            let [edge, rest] = Layout::vertical([row, Constraint::Fill(1)]).areas(body);
+            (rest, Some(edge))
         }
     }
 }
@@ -608,6 +635,7 @@ mod tests {
         prompt: Option<&'a str>,
         status: Option<Status>,
         list: ListPosition,
+        border: bool,
         width: u16,
         height: u16,
         offset: usize,
@@ -628,6 +656,7 @@ mod tests {
                 prompt: None,
                 status: None,
                 list: ListPosition::Below,
+                border: false,
                 width: 40,
                 height: 4,
                 offset: 0,
@@ -659,6 +688,13 @@ mod tests {
             }
         }
 
+        fn border(self) -> Self {
+            Self {
+                border: true,
+                ..self
+            }
+        }
+
         fn width(self, width: u16) -> Self {
             Self { width, ..self }
         }
@@ -676,6 +712,7 @@ mod tests {
             let mut terminal = Terminal::new(TestBackend::new(self.width, self.height)).unwrap();
             let config = Config {
                 list: self.list,
+                border: self.border,
                 colors: self.theme,
                 ..Config::default()
             };
@@ -1317,5 +1354,76 @@ mod tests {
         assert_eq!(buffer[(0, 0)].fg, Color::Magenta);
         assert_eq!(text(buffer, 1).trim(), "");
         assert_eq!(text(buffer, 2).trim(), "");
+    }
+
+    #[test]
+    fn draws_the_border_on_the_last_row_below_the_list() {
+        let rendered = Render::new(&finder(HISTORY)).border().height(6).run();
+        let buffer = &rendered.buffer;
+
+        assert_eq!(text(buffer, 5), DASH.repeat(40));
+        assert!((0..40).all(|x| buffer[(x, 5)].fg == Color::DarkGray));
+        // Both commands, then a blank row over the border
+        assert!(text(buffer, FIRST_ROW + 1).trim_end().ends_with("  ls -la"));
+        assert_eq!(text(buffer, 4).trim(), "");
+        assert_eq!(rendered.page, 3);
+    }
+
+    #[test]
+    fn draws_the_border_on_the_first_row_above_the_list() {
+        let rendered = Render::new(&finder(HISTORY))
+            .above()
+            .border()
+            .height(6)
+            .run();
+        let buffer = &rendered.buffer;
+
+        assert_eq!(text(buffer, 0), DASH.repeat(40));
+        assert_eq!(text(buffer, 1).trim(), "");
+        assert!(text(buffer, 2).trim_end().ends_with("  ls -la"));
+        assert!(text(buffer, 3).trim_end().ends_with("  ls"));
+        assert!(text(buffer, 4).ends_with(" 2/2 ──"));
+        assert_eq!(text(buffer, 5).trim_end(), "> ls");
+        assert_eq!(rendered.page, 3);
+    }
+
+    #[test]
+    fn draws_the_border_past_the_preview() {
+        let below = Render::new(&finder(LONG)).border().height(9).run().buffer;
+
+        assert_eq!(text(&below, 5), DASH.repeat(40));
+        assert_eq!(text(&below, 7).trim_end(), "eight nine; ls");
+        assert_eq!(text(&below, 8), DASH.repeat(40));
+
+        let above = Render::new(&finder(LONG))
+            .above()
+            .border()
+            .height(9)
+            .run()
+            .buffer;
+
+        assert_eq!(text(&above, 0), DASH.repeat(40));
+        assert_eq!(
+            text(&above, 1).trim_end(),
+            "echo one two three four five six seven"
+        );
+        assert_eq!(text(&above, 3), DASH.repeat(40));
+    }
+
+    #[test]
+    fn leaves_the_border_out_without_a_row_for_the_list() {
+        let finder = finder(HISTORY);
+        let short = Render::new(&finder).border().height(3).run().buffer;
+
+        assert!(text(&short, FIRST_ROW).trim_end().ends_with("  ls"));
+
+        let rendered = Render::new(&finder).border().height(4).run();
+        assert!(
+            text(&rendered.buffer, FIRST_ROW)
+                .trim_end()
+                .ends_with("  ls")
+        );
+        assert_eq!(text(&rendered.buffer, 3), DASH.repeat(40));
+        assert_eq!(rendered.page, 1);
     }
 }

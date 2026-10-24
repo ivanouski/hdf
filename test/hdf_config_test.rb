@@ -39,6 +39,14 @@ class HdfConfigTest < HdfTestCase
     assert_picks(:enter, 'gg')
   end
 
+  def test_draws_the_border_on_the_last_row_of_the_pane
+    write_config("border = true\n")
+    start('clau')
+
+    assert_equal ['> clau', 'Claude', 'claude --resume', 'sbx run claude (3)', 'sbx build claude'], pane
+    assert_equal '─' * 80, @session.screen[11]
+  end
+
   def test_fails_on_a_height_without_a_row_for_the_list
     write_config("height = 2\n")
     _, stderr, status = run_hdf('ls')

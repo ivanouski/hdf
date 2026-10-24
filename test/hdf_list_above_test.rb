@@ -42,6 +42,15 @@ class HdfListAboveTest < HdfTestCase
     assert_equal [4, 0], @session.cursor
   end
 
+  def test_draws_the_border_on_the_first_row_of_the_pane
+    write_config(%(list = "above"\nborder = true\n))
+    start('clau')
+
+    assert_equal '─' * 80, @session.screen[0]
+    assert_equal ['> clau', 'Claude', 'claude --resume', 'sbx run claude (3)', 'sbx build claude'], pane_above
+    assert_equal '> clau', @session.screen[11]
+  end
+
   def test_fits_a_short_terminal
     start('', rows: 4)
 
